@@ -21,8 +21,10 @@ if __name__ == "__main__":
         print("=" * 60)
         print("  StarSim: Starry Sky & RSO Optical Imagery Simulator")
         print("  Launching interactive Web Dashboard...")
-        print("  Access in your browser at: http://127.0.0.1:5000")
+        print("  Access in your browser at:")
+        print("    -> http://127.0.0.1:5000")
+        print("    -> http://localhost:5000")
         print("=" * 60)
-        start_server(host="127.0.0.1", port=5000, debug=False)
+        start_server(host="0.0.0.0", port=5000, debug=False)
     else:
         main()

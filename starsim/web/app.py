@@ -113,7 +113,15 @@ def create_app(output_dir: str = "./output") -> Flask:
             end_iso = request.args.get("end_time", "2026-10-19T20:00:10Z")
             group = request.args.get("group", "visual")
 
+            coord_frame = request.args.get("coord_frame", "radec")
+            az = float(request.args.get("az", 180.0))
+            alt_pt = float(request.args.get("alt_pt", 65.0))
+
             site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
+            if coord_frame == "altaz":
+                pointing = PointingDirection(coord_frame="altaz", az_deg=az, alt_deg=alt_pt)
+                ra, dec = pointing.get_equatorial(site, start_iso)
+
             transits = LiveSatelliteManager.find_transiting_satellites(
                 site=site,
                 pointing_ra_deg=ra,
@@ -214,6 +222,6 @@ def create_app(output_dir: str = "./output") -> Flask:
     return app
 
 
-def start_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False, output_dir: str = "./output"):
+def start_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False, output_dir: str = "./output"):
     app = create_app(output_dir)
-    app.run(host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug, threaded=True)

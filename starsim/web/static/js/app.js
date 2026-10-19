@@ -338,7 +338,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const fovW = (prof.detector.width_px * pixScale) / 3600.0;
         const fovH = (prof.detector.height_px * pixScale) / 3600.0;
 
-        fetch(`/api/rso/transits?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&fov_w=${fovW}&fov_h=${fovH}&start_time=${encodeURIComponent(t0)}&end_time=${encodeURIComponent(t1)}&group=visual`)
+        const coordFrame = document.querySelector("input[name='coord-frame']:checked") ? document.querySelector("input[name='coord-frame']:checked").value : "radec";
+        const az = document.getElementById("point-az").value;
+        const altPt = document.getElementById("point-alt").value;
+
+        fetch(`/api/rso/transits?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&coord_frame=${coordFrame}&az=${az}&alt_pt=${altPt}&fov_w=${fovW}&fov_h=${fovH}&start_time=${encodeURIComponent(t0)}&end_time=${encodeURIComponent(t1)}&group=visual`)
             .then(r => r.json())
             .then(data => {
                 transitingSatellites = data.transits || [];
@@ -547,13 +551,19 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         } else if (orbitMode === "live_sat") {
             const opt = liveSatSelect.options[liveSatSelect.selectedIndex];
-            if (opt) {
+            if (opt && opt.dataset && opt.dataset.tle1) {
                 targets.push({
                     name: opt.dataset.name || "Live_RSO",
                     mode: "tle",
                     tle1: opt.dataset.tle1,
                     tle2: opt.dataset.tle2,
                     visual_magnitude: parseFloat(opt.dataset.vmag) || vmag
+                });
+            } else {
+                targets.push({
+                    name: "ISS",
+                    mode: "tle",
+                    visual_magnitude: vmag
                 });
             }
         } else if (orbitMode === "preset_tle") {
@@ -791,6 +801,29 @@ document.addEventListener("DOMContentLoaded", () => {
     toggleAnnotations.addEventListener("change", drawAnnotations);
     toggleBurnin.addEventListener("change", () => updateFrameView(currentFrameIndex));
     window.addEventListener("resize", drawAnnotations);
+
+    // Contrast Stretch Toggles
+    const stretchButtons = document.querySelectorAll(".btn-stretch");
+    stretchButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            stretchButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            applyStretch(btn.dataset.stretch);
+        });
+    });
+
+    function applyStretch(mode) {
+        if (!simImage) return;
+        if (mode === "zscale") {
+            simImage.style.filter = "contrast(1.25) brightness(1.1)";
+        } else if (mode === "log") {
+            simImage.style.filter = "contrast(0.9) brightness(1.4)";
+        } else if (mode === "asinh") {
+            simImage.style.filter = "contrast(1.45) brightness(1.15)";
+        } else {
+            simImage.style.filter = "none";
+        }
+    }
 
     // 13. Populate Data Catalog Tables
     function populateDataTables(res) {

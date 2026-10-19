@@ -232,41 +232,50 @@ class LiveSatelliteManager:
                       t.datetime.hour, t.datetime.minute,
                       t.datetime.second + t.datetime.microsecond * 1e-6)
 
-        visible = []
-        altaz_frame = AltAz(obstime=t, location=site.earth_location)
-
+        valid_sats = []
+        xs, ys, zs = [], [], []
         for s in satellites:
             satrec = s["satrec"]
             e, r_teme, _ = satrec.sgp4(jd, fr)
             if e != 0:
                 continue
+            valid_sats.append(s)
+            xs.append(r_teme[0])
+            ys.append(r_teme[1])
+            zs.append(r_teme[2])
 
-            try:
-                sat_teme = TEME(
-                    CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
-                    obstime=t
-                )
-                coord = SkyCoord(sat_teme)
-                altaz = coord.transform_to(altaz_frame)
-                alt_deg = float(altaz.alt.deg)
+        if not valid_sats:
+            return []
 
-                if alt_deg >= min_alt_deg:
-                    icrs = coord.icrs
-                    visible.append({
-                        "name": s["name"],
-                        "norad_id": s["norad_id"],
-                        "tle1": s["tle1"],
-                        "tle2": s["tle2"],
-                        "az_deg": round(float(altaz.az.deg), 2),
-                        "alt_deg": round(alt_deg, 2),
-                        "ra_deg": round(float(icrs.ra.deg), 2),
-                        "dec_deg": round(float(icrs.dec.deg), 2),
-                        "distance_km": round(float(altaz.distance.to_value(u.km)), 1),
-                        "vmag": s["vmag"]
-                    })
-            except Exception:
-                pass
+        # Vectorized Astropy TEME -> AltAz and ICRS
+        rep = CartesianRepresentation(np.array(xs) * u.km, np.array(ys) * u.km, np.array(zs) * u.km)
+        altaz_frame = AltAz(obstime=t, location=site.earth_location)
+        coords = SkyCoord(TEME(rep, obstime=t))
+        altaz = coords.transform_to(altaz_frame)
+        icrs = coords.icrs
 
+        az_arr = np.atleast_1d(altaz.az.deg)
+        alt_arr = np.atleast_1d(altaz.alt.deg)
+        dist_arr = np.atleast_1d(altaz.distance.to_value(u.km))
+        ra_arr = np.atleast_1d(icrs.ra.deg)
+        dec_arr = np.atleast_1d(icrs.dec.deg)
+
+        visible = []
+        for i, s in enumerate(valid_sats):
+            alt_deg = float(alt_arr[i])
+            if alt_deg >= min_alt_deg:
+                visible.append({
+                    "name": s["name"],
+                    "norad_id": s["norad_id"],
+                    "tle1": s["tle1"],
+                    "tle2": s["tle2"],
+                    "az_deg": round(float(az_arr[i]), 2),
+                    "alt_deg": round(alt_deg, 2),
+                    "ra_deg": round(float(ra_arr[i]), 2),
+                    "dec_deg": round(float(dec_arr[i]), 2),
+                    "distance_km": round(float(dist_arr[i]), 1),
+                    "vmag": s["vmag"]
+                })
         return visible
 
     @classmethod
@@ -286,45 +295,77 @@ class LiveSatelliteManager:
         t1 = Time(t_end_iso)
         duration_s = max(1.0, (t1 - t0).to_value("sec"))
 
-        n_samples = max(5, int(duration_s / 0.5))
+        n_samples = max(4, min(10, int(duration_s / 0.5)))
         sample_times = t0 + np.linspace(0.0, duration_s, n_samples) * (1.0 / 86400.0)
 
-        # FOV diagonal radius in degrees
-        max_sep_deg = (math.hypot(fov_deg[0], fov_deg[1]) / 2.0) * 1.5
+        # Quick pre-filter: calculate AltAz at t0. Satellites with alt < -12 deg cannot reach FOV in seconds
+        jd0, fr0 = jday(t0.datetime.year, t0.datetime.month, t0.datetime.day,
+                        t0.datetime.hour, t0.datetime.minute,
+                        t0.datetime.second + t0.datetime.microsecond * 1e-6)
+
+        valid_sats = []
+        xs0, ys0, zs0 = [], [], []
+        for s in satellites:
+            e, r, _ = s["satrec"].sgp4(jd0, fr0)
+            if e == 0:
+                valid_sats.append(s)
+                xs0.append(r[0])
+                ys0.append(r[1])
+                zs0.append(r[2])
+
+        if not valid_sats:
+            return []
+
+        rep0 = CartesianRepresentation(np.array(xs0) * u.km, np.array(ys0) * u.km, np.array(zs0) * u.km)
+        altaz_frame0 = AltAz(obstime=t0, location=site.earth_location)
+        altaz0 = SkyCoord(TEME(rep0, obstime=t0)).transform_to(altaz_frame0)
+        alt0_arr = np.atleast_1d(altaz0.alt.deg)
+
+        # Retain candidate satellites near or above horizon
+        candidate_sats = [valid_sats[i] for i in range(len(valid_sats)) if alt0_arr[i] > -12.0]
+        if not candidate_sats:
+            return []
 
         pointing_coord = SkyCoord(ra=pointing_ra_deg * u.deg, dec=pointing_dec_deg * u.deg, frame="icrs")
-        transits = []
+        max_sep_deg = (math.hypot(fov_deg[0], fov_deg[1]) / 2.0) * 1.5
 
-        for s in satellites:
-            satrec = s["satrec"]
-            positions = []
-            min_sep = 999.0
-            best_time = None
-
-            for st in sample_times:
-                jd, fr = jday(st.datetime.year, st.datetime.month, st.datetime.day,
+        # Vectorized coordinate computation across sample times
+        all_icrs_coords = []
+        for st in sample_times:
+            jd_s, fr_s = jday(st.datetime.year, st.datetime.month, st.datetime.day,
                               st.datetime.hour, st.datetime.minute,
                               st.datetime.second + st.datetime.microsecond * 1e-6)
-                e, r_teme, _ = satrec.sgp4(jd, fr)
-                if e != 0:
-                    continue
+            xs, ys, zs = [], [], []
+            for s in candidate_sats:
+                e, r, _ = s["satrec"].sgp4(jd_s, fr_s)
+                if e == 0:
+                    xs.append(r[0])
+                    ys.append(r[1])
+                    zs.append(r[2])
+                else:
+                    xs.append(0.0)
+                    ys.append(0.0)
+                    zs.append(0.0)
 
-                try:
-                    sat_teme = TEME(
-                        CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
-                        obstime=st
-                    )
-                    coord = SkyCoord(sat_teme).icrs
-                    sep = float(pointing_coord.separation(coord).deg)
-                    if sep < min_sep:
-                        min_sep = sep
-                        best_time = st.utc.isot + "Z"
-                    positions.append((float(coord.ra.deg), float(coord.dec.deg), sep))
-                except Exception:
-                    pass
+            rep_st = CartesianRepresentation(np.array(xs) * u.km, np.array(ys) * u.km, np.array(zs) * u.km)
+            coords_st = SkyCoord(TEME(rep_st, obstime=st)).icrs
+            all_icrs_coords.append(coords_st)
+
+        transits = []
+        for sat_idx, s in enumerate(candidate_sats):
+            min_sep = 999.0
+            best_time = None
+            positions = []
+
+            for time_idx, st in enumerate(sample_times):
+                coord = all_icrs_coords[time_idx][sat_idx]
+                sep = float(pointing_coord.separation(coord).deg)
+                if sep < min_sep:
+                    min_sep = sep
+                    best_time = st.utc.isot + "Z"
+                positions.append((float(coord.ra.deg), float(coord.dec.deg), sep))
 
             if min_sep <= max_sep_deg and len(positions) >= 2:
-                # Calculate angular speed in deg/sec
                 d_ra = (positions[-1][0] - positions[0][0]) * math.cos(math.radians(pointing_dec_deg))
                 d_dec = positions[-1][1] - positions[0][1]
                 speed_deg_s = math.hypot(d_ra, d_dec) / duration_s
