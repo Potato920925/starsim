@@ -82,20 +82,30 @@ document.addEventListener("DOMContentLoaded", () => {
     const tableStarsBody = document.getElementById("table-stars-body");
 
     // 1. Tab Switching
+    function switchToTab(tabName) {
+        viewTabs.forEach(t => {
+            if (t.dataset.tab === tabName) {
+                t.classList.add("active");
+            } else {
+                t.classList.remove("active");
+            }
+        });
+        tabPanels.forEach(p => {
+            if (p.id === `tab-${tabName}-panel`) {
+                p.classList.add("active");
+            } else {
+                p.classList.remove("active");
+            }
+        });
+        if (tabName === "skydome") {
+            drawSkyDomeRadar();
+            fetchTransitingSatellites();
+        }
+    }
+
     viewTabs.forEach(tab => {
         tab.addEventListener("click", () => {
-            viewTabs.forEach(t => t.classList.remove("active"));
-            tabPanels.forEach(p => p.classList.remove("active"));
-            tab.classList.add("active");
-            const targetId = `tab-${tab.dataset.tab}-panel`;
-            const targetPanel = document.getElementById(targetId);
-            if (targetPanel) {
-                targetPanel.classList.add("active");
-                if (tab.dataset.tab === "skydome") {
-                    drawSkyDomeRadar();
-                    fetchTransitingSatellites();
-                }
-            }
+            switchToTab(tab.dataset.tab);
         });
     });
 
@@ -296,42 +306,52 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function fetchLiveSkyMap() {
-        const lat = siteLatInput.value;
-        const lon = siteLonInput.value;
-        const alt = siteAltInput.value;
-        const time = document.getElementById("start-time").value;
+        const lat = siteLatInput ? siteLatInput.value : 23.4694;
+        const lon = siteLonInput ? siteLonInput.value : 120.8726;
+        const alt = siteAltInput ? siteAltInput.value : 2862;
+        const timeInput = document.getElementById("start-time");
+        const time = timeInput ? timeInput.value : "2026-10-19T20:00:00Z";
 
         fetch(`/api/rso/sky_map?lat=${lat}&lon=${lon}&alt=${alt}&time=${encodeURIComponent(time)}&group=visual`)
             .then(r => r.json())
             .then(data => {
                 liveSatellites = data.satellites || [];
-                liveSatSelect.innerHTML = "";
-                liveSatellites.forEach(s => {
-                    const opt = document.createElement("option");
-                    opt.value = s.norad_id;
-                    opt.textContent = `${s.name} (Az:${s.az_deg}°, Alt:${s.alt_deg}°, V:${s.vmag})`;
-                    opt.dataset.tle1 = s.tle1;
-                    opt.dataset.tle2 = s.tle2;
-                    opt.dataset.vmag = s.vmag;
-                    opt.dataset.name = s.name;
-                    liveSatSelect.appendChild(opt);
-                });
+                if (liveSatSelect) {
+                    liveSatSelect.innerHTML = "";
+                    liveSatellites.forEach(s => {
+                        const opt = document.createElement("option");
+                        opt.value = s.norad_id;
+                        opt.textContent = `${s.name} (Az:${s.az_deg}°, Alt:${s.alt_deg}°, V:${s.vmag})`;
+                        opt.dataset.tle1 = s.tle1;
+                        opt.dataset.tle2 = s.tle2;
+                        opt.dataset.vmag = s.vmag;
+                        opt.dataset.name = s.name;
+                        liveSatSelect.appendChild(opt);
+                    });
+                }
                 drawSkyDomeRadar();
             })
-            .catch(console.error);
+            .catch(err => {
+                console.warn("fetchLiveSkyMap error:", err);
+            });
     }
 
     function fetchTransitingSatellites() {
-        const lat = siteLatInput.value;
-        const lon = siteLonInput.value;
-        const alt = siteAltInput.value;
-        const ra = document.getElementById("point-ra").value;
-        const dec = document.getElementById("point-dec").value;
-        const t0 = document.getElementById("start-time").value;
-        const expTime = parseFloat(document.getElementById("exposure-time").value) || 2.0;
-        const frames = parseInt(document.getElementById("frame-count").value) || 1;
+        const lat = siteLatInput ? siteLatInput.value : 23.4694;
+        const lon = siteLonInput ? siteLonInput.value : 120.8726;
+        const alt = siteAltInput ? siteAltInput.value : 2862;
+        const ra = document.getElementById("point-ra") ? document.getElementById("point-ra").value : 88.79;
+        const dec = document.getElementById("point-dec") ? document.getElementById("point-dec").value : 7.41;
+        const t0Input = document.getElementById("start-time");
+        const t0 = t0Input ? t0Input.value : "2026-10-19T20:00:00Z";
+        let dateObj = new Date(t0);
+        if (isNaN(dateObj.getTime())) {
+            dateObj = new Date();
+        }
+        const expTime = parseFloat(document.getElementById("exposure-time")?.value) || 2.0;
+        const frames = parseInt(document.getElementById("frame-count")?.value) || 1;
         const totalDuration = (expTime + 0.5) * frames;
-        const t1 = new Date(new Date(t0).getTime() + totalDuration * 1000).toISOString();
+        const t1 = new Date(dateObj.getTime() + totalDuration * 1000).toISOString();
 
         const prof = buildCurrentSensorProfile();
         const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
@@ -339,8 +359,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const fovH = (prof.detector.height_px * pixScale) / 3600.0;
 
         const coordFrame = document.querySelector("input[name='coord-frame']:checked") ? document.querySelector("input[name='coord-frame']:checked").value : "radec";
-        const az = document.getElementById("point-az").value;
-        const altPt = document.getElementById("point-alt").value;
+        const az = document.getElementById("point-az") ? document.getElementById("point-az").value : 180;
+        const altPt = document.getElementById("point-alt") ? document.getElementById("point-alt").value : 65;
 
         fetch(`/api/rso/transits?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&coord_frame=${coordFrame}&az=${az}&alt_pt=${altPt}&fov_w=${fovW}&fov_h=${fovH}&start_time=${encodeURIComponent(t0)}&end_time=${encodeURIComponent(t1)}&group=visual`)
             .then(r => r.json())
@@ -349,7 +369,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderTransitTable(transitingSatellites);
                 drawSkyDomeRadar();
             })
-            .catch(console.error);
+            .catch(err => {
+                console.warn("fetchTransitingSatellites error:", err);
+            });
     }
 
     function renderTransitTable(transits) {
@@ -654,25 +676,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 10. Assemble Full Configuration
     function buildFullConfig() {
-        const coordFrame = document.querySelector("input[name='coord-frame']:checked").value;
-        const trackingMode = document.querySelector("input[name='tracking-mode']:checked").value;
-        const orbitMode = orbitModeSelect.value;
-        const simEngine = document.querySelector("input[name='sim-engine']:checked").value;
-        const useGpu = document.getElementById("use-gpu-check").checked;
+        const coordRadio = document.querySelector("input[name='coord-frame']:checked");
+        const coordFrame = coordRadio ? coordRadio.value : "radec";
+
+        const trackingRadio = document.querySelector("input[name='tracking-mode']:checked");
+        const trackingMode = trackingRadio ? trackingRadio.value : "sidereal";
+
+        const orbitMode = orbitModeSelect ? orbitModeSelect.value : "smart_transit";
+
+        const simRadio = document.querySelector("input[name='sim-engine']:checked");
+        const simEngine = simRadio ? simRadio.value : "gpu";
+
+        const gpuCheck = document.getElementById("use-gpu-check");
+        const useGpu = gpuCheck ? gpuCheck.checked : true;
 
         let targets = [];
-        const vmag = parseFloat(document.getElementById("target-vmag").value) || 7.5;
+        const vmagInput = document.getElementById("target-vmag");
+        const vmag = vmagInput ? (parseFloat(vmagInput.value) || 7.5) : 7.5;
 
         if (orbitMode === "smart_transit") {
+            const altKm = parseFloat(document.getElementById("target-alt-km")?.value) || 500.0;
+            const angle = parseFloat(document.getElementById("target-angle")?.value) || 35.0;
             targets.push({
                 name: "Smart_Transit_RSO",
                 mode: "smart_transit",
-                transit_altitude_km: parseFloat(document.getElementById("target-alt-km").value) || 500.0,
-                transit_angle_deg: parseFloat(document.getElementById("target-angle").value) || 35.0,
+                transit_altitude_km: altKm,
+                transit_angle_deg: angle,
                 visual_magnitude: vmag
             });
         } else if (orbitMode === "live_sat") {
-            const opt = liveSatSelect.options[liveSatSelect.selectedIndex];
+            const opt = liveSatSelect && liveSatSelect.selectedIndex >= 0 ? liveSatSelect.options[liveSatSelect.selectedIndex] : null;
             if (opt && opt.dataset && opt.dataset.tle1) {
                 targets.push({
                     name: opt.dataset.name || "Live_RSO",
@@ -689,52 +722,62 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             }
         } else if (orbitMode === "preset_tle") {
-            const presetKey = document.getElementById("tle-preset-select").value;
+            const presetSelect = document.getElementById("tle-preset-select");
+            const presetKey = presetSelect ? presetSelect.value : "iss";
             targets.push({
                 name: presetKey.toUpperCase(),
                 mode: "tle",
                 visual_magnitude: vmag
             });
         } else {
+            const tle1Input = document.getElementById("custom-tle1");
+            const tle2Input = document.getElementById("custom-tle2");
             targets.push({
                 name: "Custom_TLE_Satellite",
                 mode: "tle",
-                tle1: document.getElementById("custom-tle1").value,
-                tle2: document.getElementById("custom-tle2").value,
+                tle1: tle1Input ? tle1Input.value.trim() : "",
+                tle2: tle2Input ? tle2Input.value.trim() : "",
                 visual_magnitude: vmag
             });
         }
 
-        const expTime = parseFloat(document.getElementById("exposure-time").value) || 2.0;
-        const frames = parseInt(document.getElementById("frame-count").value) || 1;
+        const expTime = parseFloat(document.getElementById("exposure-time")?.value) || 2.0;
+        const frames = parseInt(document.getElementById("frame-count")?.value) || 1;
         const interval = expTime + 0.5;
         const totalDuration = interval * frames;
 
-        const startTimeStr = document.getElementById("start-time").value;
-        const t0 = new Date(startTimeStr);
+        const startTimeStr = document.getElementById("start-time") ? document.getElementById("start-time").value : "2026-10-19T20:00:00Z";
+        let t0 = new Date(startTimeStr);
+        if (isNaN(t0.getTime())) {
+            t0 = new Date();
+        }
         const t1 = new Date(t0.getTime() + totalDuration * 1000);
+
+        const siteName = (sitePresetSelect && sitePresetSelect.selectedIndex >= 0 && sitePresetSelect.options[sitePresetSelect.selectedIndex])
+            ? sitePresetSelect.options[sitePresetSelect.selectedIndex].text
+            : "Lulin";
 
         return {
             site: {
-                name: sitePresetSelect.options[sitePresetSelect.selectedIndex].text,
-                lat_deg: parseFloat(siteLatInput.value),
-                lon_deg: parseFloat(siteLonInput.value),
-                alt_m: parseFloat(siteAltInput.value)
+                name: siteName,
+                lat_deg: parseFloat(siteLatInput?.value) || 23.4694,
+                lon_deg: parseFloat(siteLonInput?.value) || 120.8726,
+                alt_m: parseFloat(siteAltInput?.value) || 2862.0
             },
             pointing: {
                 coord_frame: coordFrame,
-                ra_deg: parseFloat(document.getElementById("point-ra").value),
-                dec_deg: parseFloat(document.getElementById("point-dec").value),
-                az_deg: parseFloat(document.getElementById("point-az").value),
-                alt_deg: parseFloat(document.getElementById("point-alt").value),
-                roll_deg: parseFloat(document.getElementById("point-roll").value),
+                ra_deg: parseFloat(document.getElementById("point-ra")?.value) || 88.79,
+                dec_deg: parseFloat(document.getElementById("point-dec")?.value) || 7.41,
+                az_deg: parseFloat(document.getElementById("point-az")?.value) || 180.0,
+                alt_deg: parseFloat(document.getElementById("point-alt")?.value) || 65.0,
+                roll_deg: parseFloat(document.getElementById("point-roll")?.value) || 0.0,
                 tracking_mode: trackingMode
             },
             atmosphere: {
-                seeing_fwhm_arcsec: parseFloat(document.getElementById("seeing-fwhm").value),
-                extinction_kv: parseFloat(document.getElementById("extinction-kv").value),
-                cloud_cover_percent: parseFloat(cloudSlider.value),
-                bortle_class: parseInt(document.getElementById("bortle-class").value),
+                seeing_fwhm_arcsec: parseFloat(document.getElementById("seeing-fwhm")?.value) || 1.5,
+                extinction_kv: parseFloat(document.getElementById("extinction-kv")?.value) || 0.15,
+                cloud_cover_percent: parseFloat(cloudSlider?.value) || 0.0,
+                bortle_class: parseInt(document.getElementById("bortle-class")?.value) || 2,
                 moon_illumination: 0.0
             },
             sensor: buildCurrentSensorProfile(),
@@ -751,7 +794,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 11. Run Simulation
     btnRunSim.addEventListener("click", () => {
-        const config = buildFullConfig();
+        switchToTab("image");
+        let config;
+        try {
+            config = buildFullConfig();
+        } catch (e) {
+            alert(`參數設定錯誤: ${e}`);
+            return;
+        }
 
         statusText.textContent = "運算模擬中 (Computing)...";
         statusText.style.color = "var(--warning)";
@@ -1022,6 +1072,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // Initial setups
+    drawSkyDomeRadar();
     fetchSensors("sony_imx455");
     fetchLiveSkyMap();
     fetchTransitingSatellites();

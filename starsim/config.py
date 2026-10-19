@@ -19,6 +19,7 @@ from .orbit import TargetOrbit
 class SimulationEngine(str, Enum):
     GPU = "gpu"            # High-performance native PyTorch/CUDA & NumPy rendering pipeline
     SATSIM = "satsim"      # SatSim official backend
+    CUSTOM = "custom"      # Backward-compatible alias for GPU pipeline
 
 
 @dataclass
@@ -39,7 +40,13 @@ class StarSimConfig:
 
     def __post_init__(self):
         if isinstance(self.engine, str):
-            self.engine = SimulationEngine(self.engine)
+            eng_val = self.engine.lower().strip()
+            if eng_val == "satsim":
+                self.engine = SimulationEngine.SATSIM
+            else:
+                self.engine = SimulationEngine.GPU
+        elif not isinstance(self.engine, SimulationEngine):
+            self.engine = SimulationEngine.GPU
         self.validate()
 
     def validate(self) -> None:

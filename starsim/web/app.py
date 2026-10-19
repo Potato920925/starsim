@@ -6,6 +6,7 @@ import os
 import json
 import zipfile
 import tempfile
+import time
 from io import BytesIO
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
@@ -24,14 +25,23 @@ from ..io import save_simulation_artifacts, apply_contrast_stretch
 def create_app(output_dir: str = "./output") -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["OUTPUT_DIR"] = os.path.abspath(output_dir)
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     os.makedirs(app.config["OUTPUT_DIR"], exist_ok=True)
 
     gpu_engine = GPURendererEngine()
     satsim_engine = SatSimBridgeEngine()
 
+    @app.after_request
+    def add_cache_control(response):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     @app.route("/")
     def index():
-        return render_template("index.html")
+        return render_template("index.html", version=int(time.time()))
 
     @app.route("/api/sites", methods=["GET"])
     def get_sites():
