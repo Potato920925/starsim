@@ -24,22 +24,37 @@ def apply_contrast_stretch(
 ) -> np.ndarray:
     """Apply astronomical contrast stretching and normalize to 8-bit [0, 255].
     Supported modes: 'zscale', 'linear', 'log', 'asinh'.
+    Preserves background noise patterns even in the presence of bright stars or satellite streaks.
     """
     arr = data.astype(np.float32)
 
     if vmin is None or vmax is None:
         if stretch == "zscale":
-            # Simplified astronomical Z-Scale (using median & interquartile range)
-            med = float(np.median(arr))
-            p10 = float(np.percentile(arr, 5))
-            p99 = float(np.percentile(arr, 99.8))
-            vmin = max(0.0, p10)
-            vmax = max(vmin + 1.0, med + (p99 - med) * 1.5)
+            try:
+                from astropy.visualization import ZScaleInterval
+                interval = ZScaleInterval(contrast=0.25, n_samples=2000)
+                z_min, z_max = interval.get_limits(arr)
+                if vmin is None:
+                    vmin = float(z_min)
+                if vmax is None:
+                    vmax = float(z_max)
+            except Exception:
+                med = float(np.median(arr))
+                # Robust std ignoring upper 10% outliers
+                bg_mask = arr <= np.percentile(arr, 90)
+                std = float(np.std(arr[bg_mask])) if np.any(bg_mask) else 2.0
+                if vmin is None:
+                    vmin = max(0.0, med - 2.0 * std)
+                if vmax is None:
+                    vmax = med + 8.0 * std
         else:
-            vmin = float(np.percentile(arr, 1))
-            vmax = float(np.percentile(arr, 99.9))
-            if vmax <= vmin:
-                vmax = vmin + 1.0
+            if vmin is None:
+                vmin = float(np.percentile(arr, 1.0))
+            if vmax is None:
+                vmax = float(np.percentile(arr, 99.5))
+
+    if vmax <= vmin:
+        vmax = vmin + 1.0
 
     # Clip values to [vmin, vmax]
     clipped = np.clip(arr, vmin, vmax)

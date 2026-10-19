@@ -41,27 +41,27 @@ def get_default_rso_dir() -> str:
 POPULAR_TLES = {
     "iss": {
         "name": "ISS (ZARYA)",
-        "tle1": "1 25544U 98067A   24080.52840278  .00014815  00000-0  26909-3 0  9993",
-        "tle2": "2 25544  51.6421 216.7909 0004561 113.8247 319.4632 15.49868725444747",
+        "tle1": "1 25544U 98067A   26292.17690977  .00007475  00000+0  14397-3 0  9996",
+        "tle2": "2 25544  51.6325  46.5187 0006760 281.9553  78.0677 15.48935490590970",
         "vmag": 3.5
     },
     "tiangong": {
         "name": "CSS (TIANGONG)",
-        "tle1": "1 48274U 21035A   24080.52083333  .00015000  00000-0  18000-3 0  9991",
-        "tle2": "2 48274  41.4720 185.3410 0005230 142.1200 218.0100 15.60230000164201",
+        "tle1": "1 48274U 21035A   26292.21113873  .00020624  00000+0  24255-3 0  9997",
+        "tle2": "2 48274  41.4690 288.6568 0001565 178.7319 181.3524 15.60932871312537",
         "vmag": 4.0
     },
     "hubble": {
         "name": "HST (HUBBLE)",
-        "tle1": "1 20580U 90037B   24080.50000000  .00001200  00000-0  56000-4 0  9995",
+        "tle1": "1 20580U 90037B   26291.94679926  .00002865  00000+0  33402-3 0  9996",
         "tle2": "2 20580  28.4690 120.4500 0002800 280.1200  79.8900 15.08500000854302",
         "vmag": 6.5
     },
     "starlink": {
-        "name": "STARLINK-1007",
-        "tle1": "1 44713U 19074A   24080.50000000  .00001800  00000-0  11000-3 0  9992",
-        "tle2": "2 44713  53.0540 240.1200 0001400  95.4200 264.7100 15.06400000240103",
-        "vmag": 7.0
+        "name": "STARLINK-1008",
+        "tle1": "1 44714U 19074B   26292.10353693  .00048057  00000+0  43854-3 0  9992",
+        "tle2": "2 44714  53.1443 186.7069 0002756 134.2207 225.9036 15.67409625383554",
+        "vmag": 6.0
     }
 }
 
@@ -86,6 +86,17 @@ class TargetOrbit:
     def __post_init__(self):
         if isinstance(self.mode, str):
             self.mode = OrbitMode(self.mode)
+        # Auto-resolve popular preset TLE if tle1 is not specified
+        if self.mode == OrbitMode.TLE and (not self.tle1 or not self.tle2):
+            key = self.name.lower().replace(" ", "").replace("_", "")
+            for pkey, pval in POPULAR_TLES.items():
+                if pkey in key or key in pkey:
+                    self.name = pval["name"]
+                    self.tle1 = pval["tle1"]
+                    self.tle2 = pval["tle2"]
+                    if not self.visual_magnitude or self.visual_magnitude == 8.5:
+                        self.visual_magnitude = pval["vmag"]
+                    break
 
     @classmethod
     def from_tle(cls, name: str, tle1: str, tle2: str, vmag: float = 8.0, norad_id: Optional[str] = None) -> "TargetOrbit":
@@ -327,7 +338,9 @@ class LiveSatelliteManager:
             return []
 
         pointing_coord = SkyCoord(ra=pointing_ra_deg * u.deg, dec=pointing_dec_deg * u.deg, frame="icrs")
-        max_sep_deg = (math.hypot(fov_deg[0], fov_deg[1]) / 2.0) * 1.5
+        fov_radius_deg = (math.hypot(fov_deg[0], fov_deg[1]) / 2.0)
+        # Search radius covers exact transits and all visible overhead satellites
+        search_radius_deg = 180.0
 
         # Vectorized coordinate computation across sample times
         all_icrs_coords = []
@@ -355,6 +368,7 @@ class LiveSatelliteManager:
         for sat_idx, s in enumerate(candidate_sats):
             min_sep = 999.0
             best_time = None
+            best_coord = None
             positions = []
 
             for time_idx, st in enumerate(sample_times):
@@ -363,28 +377,67 @@ class LiveSatelliteManager:
                 if sep < min_sep:
                     min_sep = sep
                     best_time = st.utc.isot + "Z"
+                    best_coord = coord
                 positions.append((float(coord.ra.deg), float(coord.dec.deg), sep))
 
-            if min_sep <= max_sep_deg and len(positions) >= 2:
+            if min_sep <= search_radius_deg and len(positions) >= 2:
                 d_ra = (positions[-1][0] - positions[0][0]) * math.cos(math.radians(pointing_dec_deg))
                 d_dec = positions[-1][1] - positions[0][1]
                 speed_deg_s = math.hypot(d_ra, d_dec) / duration_s
 
+                # Convert closest position to AltAz
+                altaz_closest = best_coord.transform_to(altaz_frame0)
+
+                is_in_fov = (min_sep <= fov_radius_deg)
                 transits.append({
                     "name": s["name"],
                     "norad_id": s["norad_id"],
                     "tle1": s["tle1"],
                     "tle2": s["tle2"],
                     "vmag": s["vmag"],
-                    "min_separation_deg": round(min_sep, 3),
+                    "is_in_fov": is_in_fov,
+                    "min_separation_deg": round(min_sep, 2),
                     "transit_time_iso": best_time,
                     "speed_deg_s": round(speed_deg_s, 4),
+                    "target_ra_deg": round(float(best_coord.ra.deg), 4),
+                    "target_dec_deg": round(float(best_coord.dec.deg), 4),
+                    "target_az_deg": round(float(altaz_closest.az.deg), 2),
+                    "target_alt_deg": round(float(altaz_closest.alt.deg), 2),
                     "start_ra_dec": (round(positions[0][0], 2), round(positions[0][1], 2)),
                     "end_ra_dec": (round(positions[-1][0], 2), round(positions[-1][1], 2))
                 })
 
-        transits.sort(key=lambda x: x["min_separation_deg"])
+        # Sort so that satellites inside FOV appear first, then closest passes
+        transits.sort(key=lambda x: (not x["is_in_fov"], x["min_separation_deg"]))
         return transits
+
+    @classmethod
+    def find_nearest_satellite(
+        cls,
+        site: ObservationSite,
+        obstime_iso: str,
+        pointing_ra_deg: Optional[float] = None,
+        pointing_dec_deg: Optional[float] = None,
+        group: str = "visual"
+    ) -> Optional[Dict[str, Any]]:
+        """Find the satellite closest to the telescope pointing or highest in the sky."""
+        sats = cls.get_sky_positions(site, obstime_iso, group=group, min_alt_deg=5.0)
+        if not sats:
+            return None
+        if pointing_ra_deg is not None and pointing_dec_deg is not None:
+            pointing_coord = SkyCoord(ra=pointing_ra_deg * u.deg, dec=pointing_dec_deg * u.deg, frame="icrs")
+            sats_with_sep = []
+            for s in sats:
+                coord = SkyCoord(ra=s["ra_deg"] * u.deg, dec=s["dec_deg"] * u.deg, frame="icrs")
+                sep = float(pointing_coord.separation(coord).deg)
+                s_copy = dict(s)
+                s_copy["separation_deg"] = round(sep, 2)
+                sats_with_sep.append(s_copy)
+            sats_with_sep.sort(key=lambda x: x["separation_deg"])
+            return sats_with_sep[0]
+        else:
+            sats.sort(key=lambda x: x["alt_deg"], reverse=True)
+            return sats[0]
 
 
 class SmartTransitGenerator:

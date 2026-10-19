@@ -56,6 +56,58 @@ class GPURendererEngine(BaseSimulationEngine):
             kernel /= kernel_sum
         return kernel.astype(np.float32)
 
+    @staticmethod
+    def _clip_line_to_detector(
+        x0: float, y0: float,
+        x1: float, y1: float,
+        w: float, h: float,
+        margin: float = 20.0
+    ) -> Optional[Tuple[float, float, float, float]]:
+        """Clip a 2D line segment to the detector viewport [-margin, w+margin] x [-margin, h+margin]
+        using Liang-Barsky algorithm. Returns clipped (cx0, cy0, cx1, cy1) or None if entirely outside.
+        """
+        if (math.isnan(x0) or math.isnan(y0) or math.isnan(x1) or math.isnan(y1) or
+            math.isinf(x0) or math.isinf(y0) or math.isinf(x1) or math.isinf(y1)):
+            return None
+
+        x_min, x_max = -margin, w + margin
+        y_min, y_max = -margin, h + margin
+
+        dx = x1 - x0
+        dy = y1 - y0
+
+        p = [-dx, dx, -dy, dy]
+        q = [x0 - x_min, x_max - x0, y0 - y_min, y_max - y0]
+
+        u1 = 0.0
+        u2 = 1.0
+
+        for pi, qi in zip(p, q):
+            if pi == 0:
+                if qi < 0:
+                    return None
+            else:
+                t = qi / pi
+                if pi < 0:
+                    if t > u2:
+                        return None
+                    if t > u1:
+                        u1 = t
+                else:
+                    if t < u1:
+                        return None
+                    if t < u2:
+                        u2 = t
+
+        if u1 > u2:
+            return None
+
+        cx0 = x0 + u1 * dx
+        cy0 = y0 + u1 * dy
+        cx1 = x0 + u2 * dx
+        cy1 = y0 + u2 * dy
+        return (cx0, cy0, cx1, cy1)
+
     def _render_streak_line(
         self,
         canvas: np.ndarray,
@@ -347,19 +399,39 @@ class GPURendererEngine(BaseSimulationEngine):
                     )
                     x0, y0 = traj["start_pixel"]
                     x1, y1 = traj["end_pixel"]
-                elif target.mode == OrbitMode.TLE and target.tle1 and target.tle2:
-                    p0 = SGP4Propagator.propagate_tle(target.tle1, target.tle2, site, frame_t0_iso)
-                    p1 = SGP4Propagator.propagate_tle(target.tle1, target.tle2, site, frame_t1_iso)
-                    if p0 and p1:
-                        x0, y0 = project_gnomonic_tan(p0["ra_deg"], p0["dec_deg"], ra_center, dec_center, pointing.roll_deg, pixel_scale, w_px / 2.0, h_px / 2.0)
-                        x1, y1 = project_gnomonic_tan(p1["ra_deg"], p1["dec_deg"], ra_center, dec_center, pointing.roll_deg, pixel_scale, w_px / 2.0, h_px / 2.0)
-                    else:
-                        x0, y0, x1, y1 = -999, -999, -999, -999
-                else:
-                    x0, y0, x1, y1 = w_px * 0.2, h_px * 0.2, w_px * 0.8, h_px * 0.8
+                elif target.mode == OrbitMode.TLE:
+                    tle1 = target.tle1
+                    tle2 = target.tle2
+                    if (not tle1 or not tle2) and target.name:
+                        key = target.name.lower().replace(" ", "").replace("_", "")
+                        for pkey, pval in POPULAR_TLES.items():
+                            if pkey in key or key in pkey:
+                                tle1 = pval["tle1"]
+                                tle2 = pval["tle2"]
+                                break
 
-                streak_len = math.hypot(x1 - x0, y1 - y0)
-                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+                    if tle1 and tle2:
+                        p0 = SGP4Propagator.propagate_tle(tle1, tle2, site, frame_t0_iso)
+                        p1 = SGP4Propagator.propagate_tle(tle1, tle2, site, frame_t1_iso)
+                        if p0 and p1:
+                            x0, y0 = project_gnomonic_tan(p0["ra_deg"], p0["dec_deg"], ra_center, dec_center, pointing.roll_deg, pixel_scale, w_px / 2.0, h_px / 2.0)
+                            x1, y1 = project_gnomonic_tan(p1["ra_deg"], p1["dec_deg"], ra_center, dec_center, pointing.roll_deg, pixel_scale, w_px / 2.0, h_px / 2.0)
+                        else:
+                            x0, y0, x1, y1 = -99999.0, -99999.0, -99999.0, -99999.0
+                    else:
+                        x0, y0, x1, y1 = -99999.0, -99999.0, -99999.0, -99999.0
+                else:
+                    x0, y0, x1, y1 = -99999.0, -99999.0, -99999.0, -99999.0
+
+                # Check if the streak actually intersects the camera detector viewport
+                clipped = self._clip_line_to_detector(x0, y0, x1, y1, w_px, h_px, margin=seeing_fwhm_px * 3.0)
+                if clipped is None:
+                    # Target is outside this frame's FOV - do NOT render streak or draw bounding box
+                    continue
+
+                cx0, cy0, cx1, cy1 = clipped
+                streak_len = math.hypot(cx1 - cx0, cy1 - cy0)
+                center_x, center_y = (cx0 + cx1) / 2.0, (cy0 + cy1) / 2.0
 
                 # Target SNR estimation
                 npix_rso = max(10.0, streak_len * seeing_fwhm_px)
@@ -367,7 +439,7 @@ class GPURendererEngine(BaseSimulationEngine):
                 rso_snr = round(sat_elec / math.sqrt(max(1.0, sat_elec + bg_noise_rso)), 1)
 
                 if pointing.tracking_mode == TrackingMode.RATE_TRACK:
-                    # Satellite is tracked (stationary point source)
+                    # Satellite is tracked (stationary point source at detector center)
                     ix, iy = int(round(w_px / 2.0)), int(round(h_px / 2.0))
                     if 0 <= ix < w_px and 0 <= iy < h_px:
                         blurred_flux[iy, ix] += sat_elec
@@ -375,26 +447,26 @@ class GPURendererEngine(BaseSimulationEngine):
                 else:
                     # Sidereal or Stare mode: Satellite streaks across sensor
                     streak_canvas = np.zeros_like(blurred_flux)
-                    self._render_streak_line(streak_canvas, x0, y0, x1, y1, sat_elec, seeing_fwhm_px)
+                    self._render_streak_line(streak_canvas, cx0, cy0, cx1, cy1, sat_elec, seeing_fwhm_px)
                     blurred_streak = self._apply_psf_convolution(streak_canvas, psf_kernel, use_cuda, config.device_id)
                     blurred_flux += blurred_streak
                     rso_size_px = round(streak_len, 1)
 
-                # Bounding box
+                # Bounding box strictly bounded to visible detector bounds
                 pad = max(10.0, seeing_fwhm_px * 3.0)
                 bbox = [
-                    round(max(0.0, min(x0, x1) - pad), 1),
-                    round(max(0.0, min(y0, y1) - pad), 1),
-                    round(min(float(w_px), max(x0, x1) + pad), 1),
-                    round(min(float(h_px), max(y0, y1) + pad), 1)
+                    round(max(0.0, min(cx0, cx1) - pad), 1),
+                    round(max(0.0, min(cy0, cy1) - pad), 1),
+                    round(min(float(w_px), max(cx0, cx1) + pad), 1),
+                    round(min(float(h_px), max(cy0, cy1) + pad), 1)
                 ]
 
                 projected_targets_all.append({
                     "frame": frame_idx,
                     "target_name": target.name,
-                    "start_pixel": (round(float(x0), 2), round(float(y0), 2)),
-                    "end_pixel": (round(float(x1), 2), round(float(y1), 2)),
-                    "center_pixel": (round(float(cx), 2), round(float(cy), 2)),
+                    "start_pixel": (round(float(cx0), 2), round(float(cy0), 2)),
+                    "end_pixel": (round(float(cx1), 2), round(float(cy1), 2)),
+                    "center_pixel": (round(float(center_x), 2), round(float(center_y), 2)),
                     "streak_length_px": round(streak_len, 1),
                     "streak_width_px": round(seeing_fwhm_px, 1),
                     "size_px": rso_size_px,

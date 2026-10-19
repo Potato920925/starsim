@@ -355,26 +355,46 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderTransitTable(transits) {
         transitTableBody.innerHTML = "";
         if (transits.length === 0) {
-            transitTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">此時段與視場未搜尋到天然穿越之衛星（建議切換為「智慧視場穿透生成」保證劃過畫面）</td></tr>`;
+            transitTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">此時段天區無過境衛星（可點擊上方「🎯 一鍵瞄準最近過境衛星」或直接點擊天球雷達上的衛星圖示）</td></tr>`;
             return;
         }
 
-        transits.forEach(t => {
+        transits.slice(0, 15).forEach(t => {
             const tr = document.createElement("tr");
+            const statusBadge = t.is_in_fov
+                ? `<span style="color:#10b981; font-weight:bold;">⚡ 視場內穿透 (0.0°)</span>`
+                : `<span style="color:#f59e0b;">角距 ${t.min_separation_deg}°</span>`;
+
             tr.innerHTML = `
                 <td><strong>${t.name}</strong></td>
                 <td>${t.transit_time_iso ? t.transit_time_iso.split('T')[1].replace('Z','') : '--'}</td>
-                <td>${t.min_separation_deg}°</td>
+                <td>${statusBadge}</td>
                 <td>V=${t.vmag}</td>
                 <td>${t.speed_deg_s}°/s</td>
-                <td><button type="button" class="btn btn-primary btn-sm btn-select-transit" data-tle1="${t.tle1}" data-tle2="${t.tle2}" data-name="${t.name}" data-vmag="${t.vmag}">設為目標</button></td>
+                <td>
+                    <button type="button" class="btn btn-primary btn-sm btn-align-transit"
+                        data-tle1="${t.tle1}" data-tle2="${t.tle2}" data-name="${t.name}" data-vmag="${t.vmag}"
+                        data-ra="${t.target_ra_deg}" data-dec="${t.target_dec_deg}"
+                        data-az="${t.target_az_deg}" data-alt="${t.target_alt_deg}">
+                        ${t.is_in_fov ? '設為目標' : '🎯 視場對齊並設為目標'}
+                    </button>
+                </td>
             `;
             transitTableBody.appendChild(tr);
         });
 
-        document.querySelectorAll(".btn-select-transit").forEach(btn => {
+        document.querySelectorAll(".btn-align-transit").forEach(btn => {
             btn.addEventListener("click", (e) => {
                 const b = e.target;
+                if (b.dataset.az && b.dataset.alt) {
+                    document.getElementById("point-az").value = b.dataset.az;
+                    document.getElementById("point-alt").value = b.dataset.alt;
+                }
+                if (b.dataset.ra && b.dataset.dec) {
+                    document.getElementById("point-ra").value = b.dataset.ra;
+                    document.getElementById("point-dec").value = b.dataset.dec;
+                }
+
                 orbitModeSelect.value = "custom_tle";
                 smartOrbitFields.style.display = "none";
                 liveSatFields.style.display = "none";
@@ -384,8 +404,58 @@ document.addEventListener("DOMContentLoaded", () => {
                 document.getElementById("custom-tle1").value = b.dataset.tle1;
                 document.getElementById("custom-tle2").value = b.dataset.tle2;
                 document.getElementById("target-vmag").value = b.dataset.vmag;
-                alert(`已將「${b.dataset.name}」載入為當前模擬之 RSO 目標！`);
+
+                drawSkyDomeRadar();
+                fetchTransitingSatellites();
+                alert(`🎯 望遠鏡已成功對準「${b.dataset.name}」過境軌道！\n現在點擊「開始光學影像模擬」即可在畫面中央觀測到該衛星！`);
             });
+        });
+    }
+
+    // Auto-point to nearest overhead satellite
+    const btnPointNearest = document.getElementById("btn-point-nearest-rso");
+    if (btnPointNearest) {
+        btnPointNearest.addEventListener("click", () => {
+            btnPointNearest.textContent = "⏳ 搜尋瞄準中...";
+            const lat = siteLatInput.value;
+            const lon = siteLonInput.value;
+            const alt = siteAltInput.value;
+            const ra = document.getElementById("point-ra").value;
+            const dec = document.getElementById("point-dec").value;
+            const time = document.getElementById("start-time").value;
+
+            fetch(`/api/rso/nearest?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&time=${encodeURIComponent(time)}&group=visual`)
+                .then(r => r.json())
+                .then(res => {
+                    btnPointNearest.textContent = "🎯 一鍵瞄準最近過境衛星";
+                    if (res.satellite) {
+                        const s = res.satellite;
+                        document.getElementById("point-az").value = s.az_deg;
+                        document.getElementById("point-alt").value = s.alt_deg;
+                        document.getElementById("point-ra").value = s.ra_deg;
+                        document.getElementById("point-dec").value = s.dec_deg;
+
+                        orbitModeSelect.value = "custom_tle";
+                        smartOrbitFields.style.display = "none";
+                        liveSatFields.style.display = "none";
+                        presetTleFields.style.display = "none";
+                        customTleFields.style.display = "block";
+
+                        document.getElementById("custom-tle1").value = s.tle1;
+                        document.getElementById("custom-tle2").value = s.tle2;
+                        document.getElementById("target-vmag").value = s.vmag;
+
+                        drawSkyDomeRadar();
+                        fetchTransitingSatellites();
+                        alert(`🎯 望遠鏡已自動對準頭頂上空的「${s.name}」(仰角 ${s.alt_deg}°, 方位 ${s.az_deg}°)，並設定為模擬目標！\n點擊「開始光學影像模擬」即可直接看見！`);
+                    } else {
+                        alert("當前時刻天空中暫無高仰角衛星，建議點選天球雷達圖自選指向或使用「智慧視場穿透生成」！");
+                    }
+                })
+                .catch(err => {
+                    btnPointNearest.textContent = "🎯 一鍵瞄準最近過境衛星";
+                    alert(`瞄準失敗: ${err}`);
+                });
         });
     }
 
@@ -449,24 +519,41 @@ document.addEventListener("DOMContentLoaded", () => {
             const sy = cy + r * Math.sin(azRad);
 
             // Check if this satellite is transiting
-            const isTransit = transitingSatellites.some(t => t.name === sat.name);
+            const transitMatch = transitingSatellites.find(t => t.name === sat.name);
+            const isInsideFov = transitMatch && transitMatch.is_in_fov;
 
-            if (isTransit) {
-                // Pulsing Green Circle
+            if (isInsideFov) {
+                // Pulsing Green Circle for in-FOV transit
                 ctx.strokeStyle = "#10b981";
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 2.5;
                 ctx.beginPath();
-                ctx.arc(sx, sy, 7, 0, 2 * Math.PI);
+                ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
                 ctx.stroke();
 
                 ctx.fillStyle = "#34d399";
                 ctx.beginPath();
-                ctx.arc(sx, sy, 3, 0, 2 * Math.PI);
+                ctx.arc(sx, sy, 3.5, 0, 2 * Math.PI);
                 ctx.fill();
 
                 ctx.fillStyle = "#10b981";
-                ctx.font = "10px Inter, sans-serif";
-                ctx.fillText(`🛰️ ${sat.name}`, sx + 10, sy - 2);
+                ctx.font = "bold 10px Inter, sans-serif";
+                ctx.fillText(`🎯 ${sat.name}`, sx + 12, sy - 2);
+            } else if (transitMatch) {
+                // Orange Circle for nearby pass
+                ctx.strokeStyle = "#f59e0b";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(sx, sy, 5, 0, 2 * Math.PI);
+                ctx.stroke();
+
+                ctx.fillStyle = "#fbbf24";
+                ctx.beginPath();
+                ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "9px Inter, sans-serif";
+                ctx.fillText(`${sat.name}`, sx + 8, sy - 2);
             } else {
                 ctx.fillStyle = "#38bdf8";
                 ctx.beginPath();
@@ -487,7 +574,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const prof = buildCurrentSensorProfile();
         const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
         const fovDeg = (prof.detector.width_px * pixScale) / 3600.0;
-        const fovPx = Math.max(12, (fovDeg / 90) * R * 1.5);
+        const fovPx = Math.max(14, (fovDeg / 90) * R * 1.5);
 
         ctx.strokeStyle = "#ef4444";
         ctx.lineWidth = 2;
@@ -504,7 +591,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ctx.fillText(`望遠鏡視場 FOV (${az.toFixed(0)}°, ${alt.toFixed(0)}°)`, tx, ty + fovPx / 2 + 10);
     }
 
-    // Click on Sky Dome to change pointing
+    // Click on Sky Dome to steer telescope or select a satellite
     skydomeCanvas.addEventListener("click", (e) => {
         const rect = skydomeCanvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -512,6 +599,41 @@ document.addEventListener("DOMContentLoaded", () => {
         const cx = skydomeCanvas.width / 2;
         const cy = skydomeCanvas.height / 2;
         const R = skydomeCanvas.width * 0.42;
+
+        // Check if click hit a satellite dot
+        let hitSat = null;
+        for (const sat of liveSatellites) {
+            const r = R * (90 - Math.max(0, sat.alt_deg)) / 90;
+            const azRad = (sat.az_deg - 90) * Math.PI / 180;
+            const sx = cx + r * Math.cos(azRad);
+            const sy = cy + r * Math.sin(azRad);
+            if (Math.hypot(mx - sx, my - sy) <= 12) {
+                hitSat = sat;
+                break;
+            }
+        }
+
+        if (hitSat) {
+            document.getElementById("point-az").value = hitSat.az_deg;
+            document.getElementById("point-alt").value = hitSat.alt_deg;
+            document.getElementById("point-ra").value = hitSat.ra_deg;
+            document.getElementById("point-dec").value = hitSat.dec_deg;
+
+            orbitModeSelect.value = "custom_tle";
+            smartOrbitFields.style.display = "none";
+            liveSatFields.style.display = "none";
+            presetTleFields.style.display = "none";
+            customTleFields.style.display = "block";
+
+            document.getElementById("custom-tle1").value = hitSat.tle1;
+            document.getElementById("custom-tle2").value = hitSat.tle2;
+            document.getElementById("target-vmag").value = hitSat.vmag;
+
+            drawSkyDomeRadar();
+            fetchTransitingSatellites();
+            alert(`🎯 望遠鏡已直接鎖定衛星「${hitSat.name}」！\n(方位角: ${hitSat.az_deg}°, 仰角: ${hitSat.alt_deg}°)\n現在點擊「開始光學影像模擬」即可看見衛星！`);
+            return;
+        }
 
         const dx = mx - cx;
         const dy = my - cy;

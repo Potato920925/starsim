@@ -138,6 +138,30 @@ def create_app(output_dir: str = "./output") -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/rso/nearest", methods=["GET"])
+    def get_nearest_rso():
+        """Find the nearest or highest overhead satellite."""
+        try:
+            lat = float(request.args.get("lat", 23.4694))
+            lon = float(request.args.get("lon", 120.8726))
+            alt = float(request.args.get("alt", 2862.0))
+            ra = float(request.args.get("ra", 88.79))
+            dec = float(request.args.get("dec", 7.41))
+            time_iso = request.args.get("time", "2026-10-19T20:00:00Z")
+            group = request.args.get("group", "visual")
+
+            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
+            sat = LiveSatelliteManager.find_nearest_satellite(
+                site=site,
+                obstime_iso=time_iso,
+                pointing_ra_deg=ra,
+                pointing_dec_deg=dec,
+                group=group
+            )
+            return jsonify({"satellite": sat})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/rso/update", methods=["POST"])
     def update_live_tles():
         """Force fetch real-time updated satellite TLEs from CelesTrak."""
