@@ -243,10 +243,15 @@ class GPURendererEngine(BaseSimulationEngine):
 
             # Initialize pre-blur flux canvas
             point_flux_canvas = np.zeros((h_px, w_px), dtype=np.float32)
+            star_streak_canvas = np.zeros((h_px, w_px), dtype=np.float32)
 
             # 2. Query star catalog and project stars
             radius_search_deg = max(sensor.fov_deg) * 0.8
             stars = self.catalog.query_cone(ra_center, dec_center, radius_search_deg, limiting_mag=14.0)
+
+            # Diurnal drift rate for STARE mode (15.041067 arcsec/s)
+            is_stare = (pointing.tracking_mode == TrackingMode.STARE)
+            diurnal_rate_arcsec_s = 15.041067
 
             for star in stars:
                 px, py = project_gnomonic_tan(
@@ -256,7 +261,7 @@ class GPURendererEngine(BaseSimulationEngine):
                     pixel_scale,
                     w_px / 2.0, h_px / 2.0
                 )
-                if 0 <= px < w_px and 0 <= py < h_px:
+                if -50 <= px < w_px + 50 and -50 <= py < h_px + 50:
                     star_elec = calculate_star_electrons(
                         vmag=star["vmag"],
                         aperture_m=sensor.optical.aperture_m,
@@ -265,25 +270,59 @@ class GPURendererEngine(BaseSimulationEngine):
                         exposure_s=t_exp,
                         transmission=atm_trans
                     )
-                    ix, iy = int(round(px)), int(round(py))
-                    point_flux_canvas[iy, ix] += star_elec
-                    if frame_idx == 0:
+
+                    # Estimate star SNR
+                    npix_star = max(4.0, math.pi * (seeing_fwhm_px ** 2))
+                    bg_noise_var = (sky_electrons + sensor.noise.dark_current_eps * t_exp) * npix_star + npix_star * (sensor.noise.read_noise_e ** 2)
+                    star_snr = round(star_elec / math.sqrt(max(1.0, star_elec + bg_noise_var)), 1)
+
+                    if is_stare:
+                        # Star drifts due to Earth rotation: delta_ra = diurnal_rate * t_exp
+                        cos_star_dec = math.cos(math.radians(star["dec_deg"]))
+                        drift_arcsec = diurnal_rate_arcsec_s * t_exp * cos_star_dec
+                        roll_rad = math.radians(pointing.roll_deg)
+                        # Westward drift across detector
+                        dx_drift = -(drift_arcsec * math.cos(roll_rad)) / pixel_scale
+                        dy_drift = (drift_arcsec * math.sin(roll_rad)) / pixel_scale
+                        streak_len = math.hypot(dx_drift, dy_drift)
+
+                        sx0, sy0 = px - dx_drift / 2.0, py - dy_drift / 2.0
+                        sx1, sy1 = px + dx_drift / 2.0, py + dy_drift / 2.0
+                        self._render_streak_line(star_streak_canvas, sx0, sy0, sx1, sy1, star_elec, seeing_fwhm_px)
+
+                        star_size_px = round(streak_len, 1)
+                        star_size_arcsec = round(streak_len * pixel_scale, 1)
+                    else:
+                        ix, iy = int(round(px)), int(round(py))
+                        if 0 <= ix < w_px and 0 <= iy < h_px:
+                            point_flux_canvas[iy, ix] += star_elec
+                        star_size_px = round(seeing_fwhm_px * 2.0, 1)
+                        star_size_arcsec = round(eff_seeing_fwhm_arcsec * 2.0, 1)
+
+                    if 0 <= px < w_px and 0 <= py < h_px:
                         projected_stars_all.append({
+                            "frame": frame_idx,
                             "name": star["name"],
-                            "ra_deg": star["ra_deg"],
-                            "dec_deg": star["dec_deg"],
+                            "ra_deg": round(star["ra_deg"], 5),
+                            "dec_deg": round(star["dec_deg"], 5),
+                            "x_px": round(float(px), 2),
+                            "y_px": round(float(py), 2),
                             "vmag": star["vmag"],
-                            "x_px": px,
-                            "y_px": py,
-                            "electrons": star_elec
+                            "size_px": star_size_px,
+                            "size_arcsec": star_size_arcsec,
+                            "snr": star_snr,
+                            "electrons": round(star_elec, 1),
+                            "is_streak": is_stare
                         })
 
             # 3. Apply seeing PSF convolution to stars
-            blurred_flux = self._apply_psf_convolution(point_flux_canvas, psf_kernel, use_cuda, config.device_id)
+            if is_stare:
+                blurred_flux = self._apply_psf_convolution(star_streak_canvas, psf_kernel, use_cuda, config.device_id)
+            else:
+                blurred_flux = self._apply_psf_convolution(point_flux_canvas, psf_kernel, use_cuda, config.device_id)
 
             # 4. Render RSO target streaks
             for target in config.targets:
-                # Calculate satellite flux in electrons:
                 sat_elec = calculate_star_electrons(
                     vmag=target.visual_magnitude,
                     aperture_m=sensor.optical.aperture_m,
@@ -319,28 +358,50 @@ class GPURendererEngine(BaseSimulationEngine):
                 else:
                     x0, y0, x1, y1 = w_px * 0.2, h_px * 0.2, w_px * 0.8, h_px * 0.8
 
+                streak_len = math.hypot(x1 - x0, y1 - y0)
+                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+
+                # Target SNR estimation
+                npix_rso = max(10.0, streak_len * seeing_fwhm_px)
+                bg_noise_rso = (sky_electrons + sensor.noise.dark_current_eps * t_exp) * npix_rso + npix_rso * (sensor.noise.read_noise_e ** 2)
+                rso_snr = round(sat_elec / math.sqrt(max(1.0, sat_elec + bg_noise_rso)), 1)
+
                 if pointing.tracking_mode == TrackingMode.RATE_TRACK:
-                    # Satellite is tracked (stationary point source), stars streak
-                    # In rate track mode, satellite sits near center:
-                    cx, cy = w_px / 2.0, h_px / 2.0
-                    ix, iy = int(round(cx)), int(round(cy))
+                    # Satellite is tracked (stationary point source)
+                    ix, iy = int(round(w_px / 2.0)), int(round(h_px / 2.0))
                     if 0 <= ix < w_px and 0 <= iy < h_px:
                         blurred_flux[iy, ix] += sat_elec
+                    rso_size_px = round(seeing_fwhm_px * 2.0, 1)
                 else:
-                    # Sidereal or stare mode: Satellite streaks across sensor
+                    # Sidereal or Stare mode: Satellite streaks across sensor
                     streak_canvas = np.zeros_like(blurred_flux)
                     self._render_streak_line(streak_canvas, x0, y0, x1, y1, sat_elec, seeing_fwhm_px)
-                    # Apply seeing blur along streak
                     blurred_streak = self._apply_psf_convolution(streak_canvas, psf_kernel, use_cuda, config.device_id)
                     blurred_flux += blurred_streak
+                    rso_size_px = round(streak_len, 1)
+
+                # Bounding box
+                pad = max(10.0, seeing_fwhm_px * 3.0)
+                bbox = [
+                    round(max(0.0, min(x0, x1) - pad), 1),
+                    round(max(0.0, min(y0, y1) - pad), 1),
+                    round(min(float(w_px), max(x0, x1) + pad), 1),
+                    round(min(float(h_px), max(y0, y1) + pad), 1)
+                ]
 
                 projected_targets_all.append({
                     "frame": frame_idx,
                     "target_name": target.name,
-                    "start_pixel": (x0, y0),
-                    "end_pixel": (x1, y1),
+                    "start_pixel": (round(float(x0), 2), round(float(y0), 2)),
+                    "end_pixel": (round(float(x1), 2), round(float(y1), 2)),
+                    "center_pixel": (round(float(cx), 2), round(float(cy), 2)),
+                    "streak_length_px": round(streak_len, 1),
+                    "streak_width_px": round(seeing_fwhm_px, 1),
+                    "size_px": rso_size_px,
+                    "bbox": bbox,
                     "vmag": target.visual_magnitude,
-                    "total_electrons": sat_elec
+                    "total_electrons": round(sat_elec, 1),
+                    "snr": rso_snr
                 })
 
             raw_flux_frames.append(blurred_flux.copy())

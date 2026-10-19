@@ -15,7 +15,7 @@ from ..sensor import list_available_sensors, load_sensor, SensorProfile, get_def
 from ..site import list_preset_observatories, ObservationSite
 from ..pointing import PointingDirection, TrackingMode
 from ..atmosphere import AtmosphericConditions
-from ..orbit import TargetOrbit, OrbitMode, POPULAR_TLES
+from ..orbit import TargetOrbit, OrbitMode, POPULAR_TLES, LiveSatelliteManager
 from ..engine.gpu_renderer import GPURendererEngine
 from ..engine.satsim_bridge import SatSimBridgeEngine
 from ..io import save_simulation_artifacts, apply_contrast_stretch
@@ -63,7 +63,6 @@ def create_app(output_dir: str = "./output") -> Flask:
             content = file.read().decode("utf-8")
             data = json.loads(content)
             profile = SensorProfile.from_dict(data)
-            # Optionally save to data/sensors
             save_path = os.path.join(get_default_sensor_dir(), f"{profile.sensor_id}.json")
             profile.to_json(save_path)
             return jsonify({
@@ -76,6 +75,73 @@ def create_app(output_dir: str = "./output") -> Flask:
     @app.route("/api/tles", methods=["GET"])
     def get_tle_presets():
         return jsonify(POPULAR_TLES)
+
+    @app.route("/api/rso/sky_map", methods=["GET"])
+    def get_rso_sky_map():
+        """Get live topocentric sky coordinates of satellites for the sky dome radar map."""
+        try:
+            lat = float(request.args.get("lat", 23.4694))
+            lon = float(request.args.get("lon", 120.8726))
+            alt = float(request.args.get("alt", 2862.0))
+            time_iso = request.args.get("time", "2026-10-19T20:00:00Z")
+            group = request.args.get("group", "visual")
+
+            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
+            satellites = LiveSatelliteManager.get_sky_positions(site, time_iso, group=group, min_alt_deg=0.0)
+            return jsonify({
+                "site": site.to_dict(),
+                "time": time_iso,
+                "group": group,
+                "count": len(satellites),
+                "satellites": satellites
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/rso/transits", methods=["GET"])
+    def get_rso_transits():
+        """Find satellites transiting or passing through the telescope FOV during the exposure window."""
+        try:
+            lat = float(request.args.get("lat", 23.4694))
+            lon = float(request.args.get("lon", 120.8726))
+            alt = float(request.args.get("alt", 2862.0))
+            ra = float(request.args.get("ra", 88.79))
+            dec = float(request.args.get("dec", 7.41))
+            fov_w = float(request.args.get("fov_w", 0.5))
+            fov_h = float(request.args.get("fov_h", 0.5))
+            start_iso = request.args.get("start_time", "2026-10-19T20:00:00Z")
+            end_iso = request.args.get("end_time", "2026-10-19T20:00:10Z")
+            group = request.args.get("group", "visual")
+
+            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
+            transits = LiveSatelliteManager.find_transiting_satellites(
+                site=site,
+                pointing_ra_deg=ra,
+                pointing_dec_deg=dec,
+                fov_deg=(fov_w, fov_h),
+                t_start_iso=start_iso,
+                t_end_iso=end_iso,
+                group=group
+            )
+            return jsonify({
+                "transits_count": len(transits),
+                "transits": transits
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/rso/update", methods=["POST"])
+    def update_live_tles():
+        """Force fetch real-time updated satellite TLEs from CelesTrak."""
+        try:
+            group = request.args.get("group", "visual")
+            satellites = LiveSatelliteManager.fetch_or_load_tles(group=group, force_refresh=True)
+            return jsonify({
+                "message": f"Successfully updated {len(satellites)} live satellites from CelesTrak ({group})",
+                "count": len(satellites)
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/simulate", methods=["POST"])
     def run_simulation():
@@ -95,7 +161,9 @@ def create_app(output_dir: str = "./output") -> Flask:
 
             # Build relative URLs for frontend display
             png_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["png"]]
+            annotated_png_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts.get("annotated_png", [])]
             fits_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["fits"]]
+            csv_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts.get("csv", [])]
 
             return jsonify({
                 "success": True,
@@ -103,9 +171,11 @@ def create_app(output_dir: str = "./output") -> Flask:
                 "device_info": result.device_info,
                 "num_frames": len(result.frames),
                 "png_urls": png_urls,
+                "annotated_png_urls": annotated_png_urls,
                 "fits_urls": fits_urls,
+                "csv_urls": csv_urls,
                 "stars_count": len(result.stars_projected),
-                "stars": result.stars_projected[:50],  # first 50 stars for inspect
+                "stars": result.stars_projected,
                 "targets": result.targets_projected,
                 "config": config.to_dict()
             })

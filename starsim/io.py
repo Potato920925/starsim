@@ -147,21 +147,122 @@ def save_fits(
     return output_path
 
 
+def save_annotated_png(
+    base_png_path: str,
+    output_path: str,
+    stars: List[Dict[str, Any]],
+    targets: List[Dict[str, Any]],
+    frame_index: int,
+    height_px: int
+) -> str:
+    """Burn high-visibility bounding boxes and text tags onto the PNG image."""
+    from PIL import ImageDraw, ImageFont
+
+    im = Image.open(base_png_path).convert("RGB")
+    draw = ImageDraw.Draw(im)
+
+    # Note: image is vertically flipped for North-Up convention, so y_img = height_px - 1 - y_px
+    # Draw Stars
+    for s in stars:
+        if s.get("frame", 0) == frame_index:
+            x = s["x_px"]
+            y = height_px - 1 - s["y_px"]
+            r = max(4.0, float(s.get("size_px", 4.0)) / 2.0)
+            draw.ellipse([x - r, y - r, x + r, y + r], outline="#10b981", width=1)
+            # Label bright stars (V <= 11)
+            if s.get("vmag", 12.0) <= 10.5:
+                tag = f"{s['name']} V={s['vmag']:.1f} S={s['size_px']:.1f}px"
+                draw.text((x + r + 4, y - 6), tag, fill="#34d399")
+
+    # Draw RSOs
+    for t in targets:
+        if t.get("frame", 0) == frame_index:
+            x0 = t["start_pixel"][0]
+            y0 = height_px - 1 - t["start_pixel"][1]
+            x1 = t["end_pixel"][0]
+            y1 = height_px - 1 - t["end_pixel"][1]
+
+            # Vector line
+            draw.line([(x0, y0), (x1, y1)], fill="#ef4444", width=2)
+            # Endpoints
+            draw.ellipse([x0 - 3, y0 - 3, x0 + 3, y0 + 3], fill="#38bdf8")
+            draw.ellipse([x1 - 3, y1 - 3, x1 + 3, y1 + 3], fill="#ef4444")
+
+            # Bounding box
+            bx0 = min(x0, x1) - 6
+            by0 = min(y0, y1) - 6
+            bx1 = max(x0, x1) + 6
+            by1 = max(y0, y1) + 6
+            draw.rectangle([bx0, by0, bx1, by1], outline="#38bdf8", width=2)
+
+            tag = f"[RSO] {t['target_name']} V={t['vmag']:.1f} Len={t['streak_length_px']:.1f}px SNR={t['snr']:.1f}"
+            draw.text((bx0, by0 - 14), tag, fill="#38bdf8")
+
+    im.save(output_path)
+    return output_path
+
+
+def save_annotations_csv(
+    output_path: str,
+    stars: List[Dict[str, Any]],
+    targets: List[Dict[str, Any]],
+    frame_index: int
+) -> str:
+    """Save detected stars and RSO targets in CSV format for spreadsheet / pandas analysis."""
+    import csv
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "frame", "object_type", "name", "x_px", "y_px", "ra_deg", "dec_deg",
+            "vmag", "size_px", "length_px", "width_px", "snr", "electrons"
+        ])
+        # RSO
+        for t in targets:
+            if t.get("frame", 0) == frame_index:
+                writer.writerow([
+                    frame_index + 1, "RSO", t["target_name"],
+                    t["center_pixel"][0], t["center_pixel"][1],
+                    "", "", t["vmag"], t["size_px"], t["streak_length_px"],
+                    t["streak_width_px"], t["snr"], t["total_electrons"]
+                ])
+        # Stars
+        for s in stars:
+            if s.get("frame", 0) == frame_index:
+                writer.writerow([
+                    frame_index + 1, "STAR", s["name"],
+                    s["x_px"], s["y_px"], s["ra_deg"], s["dec_deg"],
+                    s["vmag"], s["size_px"], s.get("size_px", ""),
+                    "", s["snr"], s["electrons"]
+                ])
+    return output_path
+
+
 def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict[str, List[str]]:
-    """Save all simulation outputs: FITS, PNGs, and JSON annotations."""
+    """Save all simulation outputs: FITS, PNGs, Annotated PNGs, CSV and JSON annotations."""
     os.makedirs(output_dir, exist_ok=True)
     fits_paths = []
     png_paths = []
+    annotated_png_paths = []
+    csv_paths = []
+
+    h_px = result.config.sensor.detector.height_px
 
     for i, frame in enumerate(result.frames):
         fits_p = os.path.join(output_dir, f"frame_{i+1:03d}.fits")
         png_p = os.path.join(output_dir, f"frame_{i+1:03d}.png")
+        ann_png_p = os.path.join(output_dir, f"frame_{i+1:03d}_annotated.png")
+        csv_p = os.path.join(output_dir, f"frame_{i+1:03d}_annotations.csv")
 
         save_fits(frame, result.config, frame_index=i, output_path=fits_p)
         save_png(frame, output_path=png_p, stretch="zscale")
+        save_annotated_png(png_p, ann_png_p, result.stars_projected, result.targets_projected, frame_index=i, height_px=h_px)
+        save_annotations_csv(csv_p, result.stars_projected, result.targets_projected, frame_index=i)
 
         fits_paths.append(fits_p)
         png_paths.append(png_p)
+        annotated_png_paths.append(ann_png_p)
+        csv_paths.append(csv_p)
 
     # Save metadata and annotations
     meta_path = os.path.join(output_dir, "simulation_meta.json")
@@ -170,6 +271,7 @@ def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict
         "device_info": result.device_info,
         "num_frames": len(result.frames),
         "stars_detected_count": len(result.stars_projected),
+        "stars": result.stars_projected,
         "targets": result.targets_projected,
         "config": result.config.to_dict()
     }
@@ -179,5 +281,7 @@ def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict
     return {
         "fits": fits_paths,
         "png": png_paths,
+        "annotated_png": annotated_png_paths,
+        "csv": csv_paths,
         "meta": [meta_path]
     }

@@ -14,18 +14,51 @@
             <span class="logo-icon">✨</span>
             <div class="logo-text">
                 <h1>StarSim</h1>
-                <span class="subtitle">基於 SatSim 與 GPU 加速的高保真星空光學模擬器</span>
+                <span class="subtitle">基於 SatSim 與 GPU 加速的高保真星空與空間目標光學模擬器</span>
             </div>
         </div>
         <div class="header-badges">
             <span id="device-badge" class="badge badge-gpu">GPU 偵測中...</span>
-            <span class="badge badge-info">v1.0.0</span>
+            <button type="button" id="btn-update-live-tles" class="badge badge-action" title="從 CelesTrak 下載最新實時軌道">🔄 實時更新在軌衛星 (CelesTrak)</button>
+            <span class="badge badge-info">v1.1.0</span>
         </div>
     </header>
 
     <main class="main-container">
         <!-- 左側：參數配置面板 -->
         <aside class="sidebar">
+            <!-- 觀測方式切換 -->
+            <div class="panel-section highlight-section">
+                <div class="section-header">
+                    <span class="icon">🎯</span>
+                    <h2>望遠鏡觀測方式 (Observation Tracking)</h2>
+                </div>
+                <div class="tracking-cards">
+                    <label class="tracking-card active">
+                        <input type="radio" name="tracking-mode" value="sidereal" checked>
+                        <div class="card-content">
+                            <span class="card-title">🔭 隨恆星運動 (恆星追蹤)</span>
+                            <span class="card-desc">望遠鏡以恆星速率轉動，恆星為銳利點源，RSO 產生運動光條 (Streak)。</span>
+                        </div>
+                    </label>
+                    <label class="tracking-card">
+                        <input type="radio" name="tracking-mode" value="stare">
+                        <div class="card-content">
+                            <span class="card-title">🛑 望遠鏡固定不動 (凝視模式)</span>
+                            <span class="card-desc">望遠鏡固定於地面，恆星因地球自轉拉線條紋，RSO 依其視角速度拉線。</span>
+                        </div>
+                    </label>
+                    <label class="tracking-card">
+                        <input type="radio" name="tracking-mode" value="rate_track">
+                        <div class="card-content">
+                            <span class="card-title">🛰️ 隨衛星運動 (衛星追蹤)</span>
+                            <span class="card-desc">望遠鏡緊盯 RSO，RSO 為清晰點源，背景恆星產生反向拖曳條紋。</span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 觀測位置 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">📍</span>
@@ -58,10 +91,11 @@
                 </div>
             </div>
 
+            <!-- 觀測方向 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">🧭</span>
-                    <h2>觀測方向與追蹤 (Pointing & Tracking)</h2>
+                    <h2>觀測指向 (Pointing)</h2>
                 </div>
                 <div class="form-group">
                     <label>座標系統：</label>
@@ -95,17 +129,10 @@
                         <label for="point-roll">旋轉角 (Roll, °)：</label>
                         <input type="number" id="point-roll" step="0.5" value="0.0" class="form-control">
                     </div>
-                    <div class="form-group col">
-                        <label for="tracking-mode">追蹤模式：</label>
-                        <select id="tracking-mode" class="form-control">
-                            <option value="sidereal">恆星追蹤 (Sidereal)</option>
-                            <option value="rate_track">衛星追蹤 (Rate Track)</option>
-                            <option value="stare">固定凝視 (Stare)</option>
-                        </select>
-                    </div>
                 </div>
             </div>
 
+            <!-- 當前天候 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">⛅</span>
@@ -142,6 +169,7 @@
                 </div>
             </div>
 
+            <!-- 觀測時序 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">⏱️</span>
@@ -158,11 +186,12 @@
                     </div>
                     <div class="form-group col">
                         <label for="frame-count">模擬總幀數：</label>
-                        <input type="number" id="frame-count" min="1" max="50" value="3" class="form-control">
+                        <input type="number" id="frame-count" min="1" max="50" value="2" class="form-control">
                     </div>
                 </div>
             </div>
 
+            <!-- 感測器型號 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">📷</span>
@@ -224,16 +253,18 @@
                 </div>
             </div>
 
+            <!-- RSO 目標管理 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">🛰️</span>
                     <h2>空間目標與軌道 (RSO Target)</h2>
                 </div>
                 <div class="form-group">
-                    <label for="orbit-mode">軌道來源：</label>
+                    <label for="orbit-mode">軌道資料來源：</label>
                     <select id="orbit-mode" class="form-control">
                         <option value="smart_transit">智慧視場穿透生成 (保證穿越鏡頭)</option>
-                        <option value="preset_tle">預設真實衛星 (ISS / Hubble / Starlink)</option>
+                        <option value="live_sat">實時在軌衛星 (CelesTrak 即時軌道)</option>
+                        <option value="preset_tle">經典衛星預設 (ISS / Hubble / Tiangong)</option>
                         <option value="custom_tle">自訂 TLE 兩行軌道要素</option>
                     </select>
                 </div>
@@ -247,6 +278,12 @@
                             <label for="target-angle">穿越方向角 (°)：</label>
                             <input type="number" id="target-angle" value="35" class="form-control">
                         </div>
+                    </div>
+                </div>
+                <div id="live-sat-fields" style="display: none;">
+                    <div class="form-group">
+                        <label for="live-sat-select">選擇當前可見之實時衛星：</label>
+                        <select id="live-sat-select" class="form-control font-mono"></select>
                     </div>
                 </div>
                 <div id="preset-tle-fields" style="display: none;">
@@ -276,10 +313,11 @@
                 </div>
             </div>
 
+            <!-- 計算引擎 -->
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">⚡</span>
-                    <h2>計算後端與硬體 (Simulation Engine)</h2>
+                    <h2>計算後端與硬體 (Engine)</h2>
                 </div>
                 <div class="form-group">
                     <div class="radio-group">
@@ -300,65 +338,162 @@
             </div>
         </aside>
 
-        <!-- 右側：模擬影像與結果檢視區 -->
+        <!-- 右側：可視化視圖區（全天雷達 + 影像檢視器） -->
         <section class="viewport-area">
-            <!-- 頂部即時狀態列 -->
-            <div class="status-bar">
-                <div class="status-item">
-                    <span class="status-label">計算狀態：</span>
-                    <span id="status-text" class="status-value">就緒 (Ready)</span>
+            <!-- 頂部視圖切換與即時狀態列 -->
+            <div class="view-header-row">
+                <div class="view-tabs">
+                    <button type="button" class="view-tab active" data-tab="image">🌌 模擬光學影像 (Optical Imagery)</button>
+                    <button type="button" class="view-tab" data-tab="skydome">📡 全天球天頂雷達星圖 (Sky Dome Radar)</button>
+                    <button type="button" class="view-tab" data-tab="data">📊 目標與恆星數據庫 (Detected Catalog)</button>
                 </div>
-                <div class="status-item">
-                    <span class="status-label">計算耗時：</span>
-                    <span id="status-time" class="status-value">-- s</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">運算設備：</span>
-                    <span id="status-device" class="status-value">--</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">恆星投影數：</span>
-                    <span id="status-stars" class="status-value">--</span>
+                <div class="status-bar">
+                    <div class="status-item">
+                        <span class="status-label">狀態：</span>
+                        <span id="status-text" class="status-value">就緒 (Ready)</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">耗時：</span>
+                        <span id="status-time" class="status-value">-- s</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">設備：</span>
+                        <span id="status-device" class="status-value">--</span>
+                    </div>
                 </div>
             </div>
 
-            <!-- 主影像畫布區 -->
-            <div class="image-viewer-container">
-                <div class="viewer-toolbar">
-                    <div class="stretch-selector">
-                        <span class="toolbar-label">天文對比度拉伸：</span>
-                        <button type="button" class="btn-stretch active" data-stretch="zscale">Z-Scale</button>
-                        <button type="button" class="btn-stretch" data-stretch="log">對數 Log</button>
-                        <button type="button" class="btn-stretch" data-stretch="asinh">雙曲正弦 Asinh</button>
-                        <button type="button" class="btn-stretch" data-stretch="linear">線性 Linear</button>
+            <!-- Tab 1: 光學影像檢視器 -->
+            <div id="tab-image-panel" class="tab-panel active">
+                <div class="image-viewer-container">
+                    <div class="viewer-toolbar">
+                        <div class="stretch-selector">
+                            <span class="toolbar-label">對比度拉伸：</span>
+                            <button type="button" class="btn-stretch active" data-stretch="zscale">Z-Scale</button>
+                            <button type="button" class="btn-stretch" data-stretch="log">對數 Log</button>
+                            <button type="button" class="btn-stretch" data-stretch="asinh">雙曲正弦 Asinh</button>
+                            <button type="button" class="btn-stretch" data-stretch="linear">線性 Linear</button>
+                        </div>
+                        <div class="overlay-toggles">
+                            <label><input type="checkbox" id="toggle-annotations" checked> 顯示標註浮層 (Overlay)</label>
+                            <label><input type="checkbox" id="toggle-burnin"> 切換為燒錄標註圖 (Burn-in)</label>
+                        </div>
                     </div>
-                    <div class="overlay-toggles">
-                        <label><input type="checkbox" id="toggle-annotations" checked> 顯示目標與恆星標註</label>
+
+                    <div class="canvas-wrapper" id="canvas-wrapper">
+                        <img id="sim-image" src="" alt="模擬星空影像預覽" style="display: none;">
+                        <canvas id="overlay-canvas"></canvas>
+                        <div id="placeholder-view" class="placeholder-content">
+                            <div class="placeholder-icon">🌌</div>
+                            <h3>尚未執行模擬</h3>
+                            <p>請在左側配置觀測站點、方向、天候與感測器，然後點擊「開始光學影像模擬」。</p>
+                        </div>
+                        <div id="loading-spinner" class="loading-overlay" style="display: none;">
+                            <div class="spinner"></div>
+                            <p id="loading-msg">正在計算恆星投影、PSF 模糊與感測器物理雜訊...</p>
+                        </div>
+                    </div>
+
+                    <!-- 多幀時序播放列 -->
+                    <div class="player-controls">
+                        <button type="button" id="btn-prev-frame" class="btn-player" title="上一幀">⏮️</button>
+                        <button type="button" id="btn-play-pause" class="btn-player" title="播放 / 暫停">▶️</button>
+                        <button type="button" id="btn-next-frame" class="btn-player" title="下一幀">⏭️</button>
+                        <div class="slider-wrapper">
+                            <input type="range" id="frame-slider" min="1" max="1" value="1" class="frame-slider">
+                            <span id="frame-indicator">第 1 / 1 幀</span>
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="canvas-wrapper" id="canvas-wrapper">
-                    <img id="sim-image" src="" alt="模擬星空影像預覽" style="display: none;">
-                    <canvas id="overlay-canvas"></canvas>
-                    <div id="placeholder-view" class="placeholder-content">
-                        <div class="placeholder-icon">🌌</div>
-                        <h3>尚未執行模擬</h3>
-                        <p>請在左側配置觀測站點、天候、感測器規格與目標軌道，然後點擊「開始光學影像模擬」。</p>
+            <!-- Tab 2: 全天球天頂地平星圖 (Sky Dome Radar) -->
+            <div id="tab-skydome-panel" class="tab-panel">
+                <div class="skydome-container">
+                    <div class="skydome-left">
+                        <div class="skydome-canvas-wrapper">
+                            <canvas id="skydome-canvas" width="460" height="460"></canvas>
+                            <div class="skydome-legend">
+                                <span class="legend-item"><span class="dot dot-fov"></span> 望遠鏡觀測範圍 (FOV)</span>
+                                <span class="legend-item"><span class="dot dot-sat"></span> 在軌衛星 (RSO)</span>
+                                <span class="legend-item"><span class="dot dot-transit"></span> 穿透視場衛星 (Transiting)</span>
+                            </div>
+                        </div>
                     </div>
-                    <div id="loading-spinner" class="loading-overlay" style="display: none;">
-                        <div class="spinner"></div>
-                        <p id="loading-msg">正在計算恆星投影、PSF 模糊與感測器物理雜訊...</p>
+                    <div class="skydome-right">
+                        <div class="panel-section h-full">
+                            <div class="section-header">
+                                <span class="icon">🎯</span>
+                                <h2>即時穿越觀測範圍之 RSO (Transiting FOV)</h2>
+                            </div>
+                            <p class="section-desc">系統自動計算當前時刻穿越望遠鏡視野範圍的實時在軌衛星：</p>
+                            <div class="transit-table-wrapper">
+                                <table class="data-table" id="transit-table">
+                                    <thead>
+                                        <tr>
+                                            <th>衛星名稱</th>
+                                            <th>穿越時刻</th>
+                                            <th>最小角距</th>
+                                            <th>視星等</th>
+                                            <th>角速度</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="transit-table-body">
+                                        <tr><td colspan="6" class="text-center text-muted">正在搜尋穿越視場之衛星...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="skydome-hint">
+                                💡 點擊全天雷達上的任意位置可直接變更望遠鏡指向，點擊表格中的衛星即可一鍵設為觀測目標！
+                            </div>
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                <!-- 多幀時序播放列 -->
-                <div class="player-controls">
-                    <button type="button" id="btn-prev-frame" class="btn-player" title="上一幀">⏮️</button>
-                    <button type="button" id="btn-play-pause" class="btn-player" title="播放 / 暫停">▶️</button>
-                    <button type="button" id="btn-next-frame" class="btn-player" title="下一幀">⏭️</button>
-                    <div class="slider-wrapper">
-                        <input type="range" id="frame-slider" min="1" max="1" value="1" class="frame-slider">
-                        <span id="frame-indicator">第 1 / 1 幀</span>
+            <!-- Tab 3: 目標與恆星數據庫 (Detected Catalog) -->
+            <div id="tab-data-panel" class="tab-panel">
+                <div class="data-catalog-container">
+                    <div class="catalog-section">
+                        <h3>🛰️ 空間目標 (RSO Targets) 物理特徵列表</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>名稱</th>
+                                    <th>中心像素 (X, Y)</th>
+                                    <th>條紋長度 (px)</th>
+                                    <th>條紋寬度 (px)</th>
+                                    <th>邊界框 [X0, Y0, X1, Y1]</th>
+                                    <th>視星等 (V)</th>
+                                    <th>訊噪比 (SNR)</th>
+                                    <th>總電子數 (e-)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-rso-body">
+                                <tr><td colspan="8" class="text-center text-muted">尚未執行模擬</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="catalog-section">
+                        <h3>⭐ 視場內恆星 (Detected Stars) 列表</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>恆星編號 / 名稱</th>
+                                    <th>像素座標 (X, Y)</th>
+                                    <th>天球座標 (RA, Dec)</th>
+                                    <th>光斑大小 (px / arcsec)</th>
+                                    <th>視星等 (V)</th>
+                                    <th>訊噪比 (SNR)</th>
+                                    <th>收集電子數 (e-)</th>
+                                    <th>型態</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-stars-body">
+                                <tr><td colspan="8" class="text-center text-muted">尚未執行模擬</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -366,12 +501,14 @@
             <!-- 底部資料與匯出面板 -->
             <div class="bottom-export-panel">
                 <div class="export-actions">
-                    <a id="btn-download-fits" class="btn btn-outline disabled" download>下載當前 FITS (含 WCS 標頭)</a>
-                    <a id="btn-download-png" class="btn btn-outline disabled" download>下載高解析 PNG</a>
-                    <button type="button" id="btn-download-all" class="btn btn-secondary disabled">打包下載全部成果 (ZIP)</button>
+                    <a id="btn-download-fits" class="btn btn-outline disabled" download>下載 FITS (含 WCS 標頭)</a>
+                    <a id="btn-download-png" class="btn btn-outline disabled" download>下載原圖 PNG</a>
+                    <a id="btn-download-annotated-png" class="btn btn-outline disabled" download>下載標註影像 PNG</a>
+                    <a id="btn-download-csv" class="btn btn-outline disabled" download>下載標註數據 CSV</a>
+                    <button type="button" id="btn-download-all" class="btn btn-secondary disabled">打包全部成果 (ZIP)</button>
                 </div>
                 <div class="info-footer">
-                    <span>提示：產出的 FITS 檔案符合 IAU 標準，可直接匯入 SAOImage DS9、AstroImageJ 或 Astrometry.net 天球校正。</span>
+                    <span>提示：標註影像已燒錄目標位置、大小與星等資訊；CSV 與 FITS 完全符合天文學科研標準。</span>
                 </div>
             </div>
         </section>

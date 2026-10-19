@@ -1,16 +1,19 @@
 """Resident Space Object (RSO) and satellite orbit manager.
-Supports TLE parsing and SGP4 propagation, Keplerian elements, state vectors,
+Supports real-time live satellite TLE updates from CelesTrak,
+SGP4 propagation, Keplerian elements, state vectors,
 and a Smart FOV Transit Generator that guarantees satellites cross the telescope's field of view.
 """
 
 from __future__ import annotations
 import math
+import os
+import urllib.request
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 from astropy.time import Time
-from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+from astropy.coordinates import SkyCoord, EarthLocation, AltAz, TEME, CartesianRepresentation
 import astropy.units as u
 from sgp4.api import Satrec, WGS72
 from sgp4.api import jday
@@ -28,6 +31,11 @@ class OrbitMode(str, Enum):
 MU_EARTH = 398600.4418
 # Earth mean equatorial radius in km
 R_EARTH_KM = 6378.137
+
+
+def get_default_rso_dir() -> str:
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, "data", "rso")
 
 
 POPULAR_TLES = {
@@ -65,6 +73,7 @@ class TargetOrbit:
     # TLE fields
     tle1: str = ""
     tle2: str = ""
+    norad_id: Optional[str] = None
     # Smart Transit / Generated fields
     transit_altitude_km: float = 500.0        # Altitude above sea level in km
     transit_velocity_kms: float = 7.6         # Approximate orbital velocity in km/s
@@ -79,9 +88,9 @@ class TargetOrbit:
             self.mode = OrbitMode(self.mode)
 
     @classmethod
-    def from_tle(cls, name: str, tle1: str, tle2: str, vmag: float = 8.0) -> "TargetOrbit":
+    def from_tle(cls, name: str, tle1: str, tle2: str, vmag: float = 8.0, norad_id: Optional[str] = None) -> "TargetOrbit":
         """Create target from TLE lines."""
-        return cls(name=name, mode=OrbitMode.TLE, tle1=tle1.strip(), tle2=tle2.strip(), visual_magnitude=vmag)
+        return cls(name=name, mode=OrbitMode.TLE, tle1=tle1.strip(), tle2=tle2.strip(), visual_magnitude=vmag, norad_id=norad_id)
 
     @classmethod
     def from_preset(cls, key: str) -> "TargetOrbit":
@@ -104,6 +113,239 @@ class TargetOrbit:
         return cls(**data_copy)
 
 
+class LiveSatelliteManager:
+    """Manages real-time live satellite orbit datasets from CelesTrak with automatic caching."""
+
+    CELESTRAK_GROUPS = {
+        "visual": "https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=tle",
+        "stations": "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle",
+        "active": "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle",
+        "starlink": "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle"
+    }
+
+    @classmethod
+    def fetch_or_load_tles(cls, group: str = "visual", force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Download or read cached TLEs for a given satellite group."""
+        rso_dir = get_default_rso_dir()
+        os.makedirs(rso_dir, exist_ok=True)
+        cache_file = os.path.join(rso_dir, f"{group}.tle")
+
+        content = ""
+        if force_refresh or not os.path.isfile(cache_file):
+            url = cls.CELESTRAK_GROUPS.get(group, cls.CELESTRAK_GROUPS["visual"])
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "StarSim/1.0 (Mozilla/5.0)"})
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    content = response.read().decode("utf-8")
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        f.write(content)
+            except Exception as e:
+                # If network fails, try reading cached copy
+                if os.path.isfile(cache_file):
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                else:
+                    return cls._get_builtin_fallback_satellites()
+        else:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                content = f.read()
+
+        satellites = cls._parse_tle_content(content)
+        return satellites if satellites else cls._get_builtin_fallback_satellites()
+
+    @classmethod
+    def _parse_tle_content(cls, content: str) -> List[Dict[str, Any]]:
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        satellites = []
+        i = 0
+        while i < len(lines):
+            # Check 3-line format (Name, TLE1, TLE2)
+            if lines[i].startswith("1 ") and i + 1 < len(lines) and lines[i + 1].startswith("2 "):
+                name = f"SAT_{lines[i][2:7].strip()}"
+                tle1 = lines[i]
+                tle2 = lines[i + 1]
+                i += 2
+            elif i + 2 < len(lines) and lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
+                name = lines[i]
+                tle1 = lines[i + 1]
+                tle2 = lines[i + 2]
+                i += 3
+            else:
+                i += 1
+                continue
+
+            try:
+                norad_id = tle1[2:7].strip()
+                satrec = Satrec.twoline2rv(tle1, tle2, WGS72)
+                # Estimate visual magnitude based on object type/name
+                vmag = 7.5
+                if "ISS" in name or "ZARYA" in name:
+                    vmag = 3.5
+                elif "TIANGONG" in name or "CSS" in name:
+                    vmag = 4.0
+                elif "HST" in name or "HUBBLE" in name:
+                    vmag = 6.0
+                elif "STARLINK" in name:
+                    vmag = 7.0
+                elif "R/B" in name:
+                    vmag = 6.5
+
+                satellites.append({
+                    "name": name,
+                    "norad_id": norad_id,
+                    "tle1": tle1,
+                    "tle2": tle2,
+                    "satrec": satrec,
+                    "vmag": vmag
+                })
+            except Exception:
+                pass
+        return satellites
+
+    @classmethod
+    def _get_builtin_fallback_satellites(cls) -> List[Dict[str, Any]]:
+        satellites = []
+        for key, p in POPULAR_TLES.items():
+            satrec = Satrec.twoline2rv(p["tle1"], p["tle2"], WGS72)
+            satellites.append({
+                "name": p["name"],
+                "norad_id": p["tle1"][2:7].strip(),
+                "tle1": p["tle1"],
+                "tle2": p["tle2"],
+                "satrec": satrec,
+                "vmag": p["vmag"]
+            })
+        return satellites
+
+    @classmethod
+    def get_sky_positions(
+        cls,
+        site: ObservationSite,
+        obstime_iso: str,
+        group: str = "visual",
+        min_alt_deg: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """Calculate topocentric (Az, Alt, RA, Dec) sky positions of all satellites in the group."""
+        satellites = cls.fetch_or_load_tles(group=group)
+        t = Time(obstime_iso)
+        jd, fr = jday(t.datetime.year, t.datetime.month, t.datetime.day,
+                      t.datetime.hour, t.datetime.minute,
+                      t.datetime.second + t.datetime.microsecond * 1e-6)
+
+        visible = []
+        altaz_frame = AltAz(obstime=t, location=site.earth_location)
+
+        for s in satellites:
+            satrec = s["satrec"]
+            e, r_teme, _ = satrec.sgp4(jd, fr)
+            if e != 0:
+                continue
+
+            try:
+                sat_teme = TEME(
+                    CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
+                    obstime=t
+                )
+                coord = SkyCoord(sat_teme)
+                altaz = coord.transform_to(altaz_frame)
+                alt_deg = float(altaz.alt.deg)
+
+                if alt_deg >= min_alt_deg:
+                    icrs = coord.icrs
+                    visible.append({
+                        "name": s["name"],
+                        "norad_id": s["norad_id"],
+                        "tle1": s["tle1"],
+                        "tle2": s["tle2"],
+                        "az_deg": round(float(altaz.az.deg), 2),
+                        "alt_deg": round(alt_deg, 2),
+                        "ra_deg": round(float(icrs.ra.deg), 2),
+                        "dec_deg": round(float(icrs.dec.deg), 2),
+                        "distance_km": round(float(altaz.distance.to_value(u.km)), 1),
+                        "vmag": s["vmag"]
+                    })
+            except Exception:
+                pass
+
+        return visible
+
+    @classmethod
+    def find_transiting_satellites(
+        cls,
+        site: ObservationSite,
+        pointing_ra_deg: float,
+        pointing_dec_deg: float,
+        fov_deg: Tuple[float, float],
+        t_start_iso: str,
+        t_end_iso: str,
+        group: str = "visual"
+    ) -> List[Dict[str, Any]]:
+        """Find all satellites that cross through or near the telescope FOV during the exposure window."""
+        satellites = cls.fetch_or_load_tles(group=group)
+        t0 = Time(t_start_iso)
+        t1 = Time(t_end_iso)
+        duration_s = max(1.0, (t1 - t0).to_value("sec"))
+
+        n_samples = max(5, int(duration_s / 0.5))
+        sample_times = t0 + np.linspace(0.0, duration_s, n_samples) * (1.0 / 86400.0)
+
+        # FOV diagonal radius in degrees
+        max_sep_deg = (math.hypot(fov_deg[0], fov_deg[1]) / 2.0) * 1.5
+
+        pointing_coord = SkyCoord(ra=pointing_ra_deg * u.deg, dec=pointing_dec_deg * u.deg, frame="icrs")
+        transits = []
+
+        for s in satellites:
+            satrec = s["satrec"]
+            positions = []
+            min_sep = 999.0
+            best_time = None
+
+            for st in sample_times:
+                jd, fr = jday(st.datetime.year, st.datetime.month, st.datetime.day,
+                              st.datetime.hour, st.datetime.minute,
+                              st.datetime.second + st.datetime.microsecond * 1e-6)
+                e, r_teme, _ = satrec.sgp4(jd, fr)
+                if e != 0:
+                    continue
+
+                try:
+                    sat_teme = TEME(
+                        CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
+                        obstime=st
+                    )
+                    coord = SkyCoord(sat_teme).icrs
+                    sep = float(pointing_coord.separation(coord).deg)
+                    if sep < min_sep:
+                        min_sep = sep
+                        best_time = st.utc.isot + "Z"
+                    positions.append((float(coord.ra.deg), float(coord.dec.deg), sep))
+                except Exception:
+                    pass
+
+            if min_sep <= max_sep_deg and len(positions) >= 2:
+                # Calculate angular speed in deg/sec
+                d_ra = (positions[-1][0] - positions[0][0]) * math.cos(math.radians(pointing_dec_deg))
+                d_dec = positions[-1][1] - positions[0][1]
+                speed_deg_s = math.hypot(d_ra, d_dec) / duration_s
+
+                transits.append({
+                    "name": s["name"],
+                    "norad_id": s["norad_id"],
+                    "tle1": s["tle1"],
+                    "tle2": s["tle2"],
+                    "vmag": s["vmag"],
+                    "min_separation_deg": round(min_sep, 3),
+                    "transit_time_iso": best_time,
+                    "speed_deg_s": round(speed_deg_s, 4),
+                    "start_ra_dec": (round(positions[0][0], 2), round(positions[0][1], 2)),
+                    "end_ra_dec": (round(positions[-1][0], 2), round(positions[-1][1], 2))
+                })
+
+        transits.sort(key=lambda x: x["min_separation_deg"])
+        return transits
+
+
 class SmartTransitGenerator:
     """Computes satellite trajectories that are mathematically guaranteed to transit
     the telescope's field of view during the observation time window.
@@ -122,52 +364,40 @@ class SmartTransitGenerator:
         t_end_iso: str,
         n_steps: int = 100
     ) -> Dict[str, Any]:
-        """Compute topocentric trajectory across the image plane [0, width_px] x [0, height_px].
-        Returns trajectory positions in pixels (x, y) and topocentric (RA, Dec) over time.
-        """
+        """Compute topocentric trajectory across the image plane [0, width_px] x [0, height_px]."""
         t0 = Time(t_start_iso)
         t1 = Time(t_end_iso)
-        duration_s = max(0.1, (t1 - t0).to_value('sec'))
+        duration_s = max(0.1, (t1 - t0).to_value("sec"))
 
-        # Angular velocity across sky:
-        # For circular orbit at altitude h: orbital speed v = sqrt(mu / (R_E + h))
         h_km = target.transit_altitude_km
         r_orb_km = R_EARTH_KM + h_km
         v_orb_kms = math.sqrt(MU_EARTH / r_orb_km)
-        # Angular speed in rad/s from ground looking at distance h_km:
         omega_rad_s = v_orb_kms / h_km
         omega_arcsec_s = math.degrees(omega_rad_s) * 3600.0
 
-        # Angular speed in pixels/second:
         speed_px_s = omega_arcsec_s / pixel_scale_arcsec
-
-        # Transit direction angle in detector coordinates (0=right, 90=up)
         angle_rad = math.radians(target.transit_angle_deg)
         dx_dt = speed_px_s * math.cos(angle_rad)
         dy_dt = speed_px_s * math.sin(angle_rad)
 
-        # Center point at midpoint time t_mid:
         cx = width_px / 2.0 + target.transit_offset_px[0]
         cy = height_px / 2.0 + target.transit_offset_px[1]
 
-        # Time array:
         times = np.linspace(0.0, duration_s, n_steps)
-        # Offset from midpoint:
         t_mid = duration_s / 2.0
         dt_mid = times - t_mid
 
-        # Pixel coordinates (x(t), y(t)):
         x_px = cx + dx_dt * dt_mid
         y_px = cy + dy_dt * dt_mid
 
-        # Convert pixel offsets back to celestial (RA, Dec) differences:
-        # dx_px * pixel_scale / 3600 = d_alpha * cos(dec), dy_px * pixel_scale / 3600 = d_dec
         cos_dec = max(0.01, math.cos(math.radians(pointing_dec_deg)))
         d_ra_deg = ((x_px - width_px / 2.0) * pixel_scale_arcsec / 3600.0) / cos_dec
         d_dec_deg = (y_px - height_px / 2.0) * pixel_scale_arcsec / 3600.0
 
         ra_arr = pointing_ra_deg + d_ra_deg
         dec_arr = pointing_dec_deg + d_dec_deg
+
+        streak_length_px = math.hypot(x_px[-1] - x_px[0], y_px[-1] - y_px[0])
 
         return {
             "times_s": times.tolist(),
@@ -179,6 +409,8 @@ class SmartTransitGenerator:
             "speed_arcsec_s": omega_arcsec_s,
             "start_pixel": (float(x_px[0]), float(y_px[0])),
             "end_pixel": (float(x_px[-1]), float(y_px[-1])),
+            "center_pixel": (float((x_px[0] + x_px[-1]) / 2.0), float((y_px[0] + y_px[-1]) / 2.0)),
+            "streak_length_px": streak_length_px,
             "vmag": target.visual_magnitude
         }
 
@@ -202,24 +434,24 @@ class SGP4Propagator:
 
         e, r_teme, v_teme = sat.sgp4(jd, fr)
         if e != 0:
-            return None  # SGP4 propagation error / decayed satellite
+            return None
 
-        # Convert TEME position in km to topocentric Az/Alt using Astropy
-        # Astropy TEME frame
-        from astropy.coordinates import TEME, CartesianRepresentation, SkyCoord
-        sat_teme = TEME(
-            CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
-            obstime=t
-        )
-        sat_coord = SkyCoord(sat_teme)
-        altaz_frame = AltAz(obstime=t, location=site.earth_location)
-        sat_altaz = sat_coord.transform_to(altaz_frame)
-        sat_icrs = sat_coord.icrs
+        try:
+            sat_teme = TEME(
+                CartesianRepresentation(r_teme[0] * u.km, r_teme[1] * u.km, r_teme[2] * u.km),
+                obstime=t
+            )
+            sat_coord = SkyCoord(sat_teme)
+            altaz_frame = AltAz(obstime=t, location=site.earth_location)
+            sat_altaz = sat_coord.transform_to(altaz_frame)
+            sat_icrs = sat_coord.icrs
 
-        return {
-            "ra_deg": float(sat_icrs.ra.deg),
-            "dec_deg": float(sat_icrs.dec.deg),
-            "az_deg": float(sat_altaz.az.deg),
-            "alt_deg": float(sat_altaz.alt.deg),
-            "distance_km": float(sat_altaz.distance.to_value(u.km))
-        }
+            return {
+                "ra_deg": float(sat_icrs.ra.deg),
+                "dec_deg": float(sat_icrs.dec.deg),
+                "az_deg": float(sat_altaz.az.deg),
+                "alt_deg": float(sat_altaz.alt.deg),
+                "distance_km": float(sat_altaz.distance.to_value(u.km))
+            }
+        except Exception:
+            return None
