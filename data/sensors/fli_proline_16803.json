@@ -1,0 +1,30 @@
+{
+  "sensor_id": "fli_proline_16803",
+  "name": "FLI ProLine PL16803 Astronomical CCD",
+  "manufacturer": "Finger Lakes Instrumentation",
+  "description": "Standard scientific observatory CCD camera based on Kodak KAF-16803 sensor with large 9.0um pixels and huge full well.",
+  "optical": {
+    "aperture_m": 0.6,
+    "focal_length_m": 2.4,
+    "filter_band": "V",
+    "central_wavelength_nm": 550.0,
+    "bandwidth_nm": 100.0
+  },
+  "detector": {
+    "width_px": 1024,
+    "height_px": 1024,
+    "pixel_size_um": 9.0,
+    "bit_depth": 16,
+    "full_well_capacity_e": 100000.0,
+    "quantum_efficiency": 0.60
+  },
+  "noise": {
+    "read_noise_e": 8.5,
+    "dark_current_eps": 0.001,
+    "operating_temp_c": -30.0,
+    "gain_e_per_adu": 1.5,
+    "bias_adu": 200.0,
+    "prnu_percent": 1.0,
+    "hot_pixel_rate": 0.0003
+  }
+}

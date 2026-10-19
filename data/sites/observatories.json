@@ -1,0 +1,58 @@
+{
+  "lulin": {
+    "name": "Lulin Observatory (鹿林天文台)",
+    "country": "Taiwan",
+    "lat": 23.4694,
+    "lon": 120.8726,
+    "alt_m": 2862.0
+  },
+  "tataka": {
+    "name": "Tataka (塔塔加觀測點)",
+    "country": "Taiwan",
+    "lat": 23.4883,
+    "lon": 120.8872,
+    "alt_m": 2610.0
+  },
+  "mauna_kea": {
+    "name": "Mauna Kea Observatory",
+    "country": "USA (Hawaii)",
+    "lat": 19.8260,
+    "lon": -155.4680,
+    "alt_m": 4205.0
+  },
+  "haleakala": {
+    "name": "Haleakala Observatories",
+    "country": "USA (Hawaii)",
+    "lat": 20.7082,
+    "lon": -156.2573,
+    "alt_m": 3055.0
+  },
+  "paranal": {
+    "name": "Paranal Observatory (VLT)",
+    "country": "Chile",
+    "lat": -24.6272,
+    "lon": -70.4042,
+    "alt_m": 2635.0
+  },
+  "kitt_peak": {
+    "name": "Kitt Peak National Observatory",
+    "country": "USA (Arizona)",
+    "lat": 31.9583,
+    "lon": -111.5997,
+    "alt_m": 2096.0
+  },
+  "la_silla": {
+    "name": "La Silla Observatory",
+    "country": "Chile",
+    "lat": -29.2563,
+    "lon": -70.7380,
+    "alt_m": 2400.0
+  },
+  "greenwich": {
+    "name": "Royal Observatory Greenwich",
+    "country": "UK",
+    "lat": 51.4769,
+    "lon": -0.0005,
+    "alt_m": 48.0
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "sensor_id": "cubesat_imx296",
+  "name": "CubeSat Space-Borne Optical Sensor (IMX296)",
+  "manufacturer": "CubeSat Optical Systems",
+  "description": "Compact, lightweight space-borne optical sensor for nanosatellite SSA missions with 3.45um pixels and 10-bit/12-bit readout.",
+  "optical": {
+    "aperture_m": 0.08,
+    "focal_length_m": 0.25,
+    "filter_band": "Clear",
+    "central_wavelength_nm": 600.0,
+    "bandwidth_nm": 300.0
+  },
+  "detector": {
+    "width_px": 1440,
+    "height_px": 1080,
+    "pixel_size_um": 3.45,
+    "bit_depth": 12,
+    "full_well_capacity_e": 10500.0,
+    "quantum_efficiency": 0.72
+  },
+  "noise": {
+    "read_noise_e": 2.2,
+    "dark_current_eps": 0.15,
+    "operating_temp_c": 15.0,
+    "gain_e_per_adu": 2.5,
+    "bias_adu": 32.0,
+    "prnu_percent": 1.5,
+    "hot_pixel_rate": 0.0005
+  }
+}

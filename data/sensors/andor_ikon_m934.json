@@ -1,0 +1,30 @@
+{
+  "sensor_id": "andor_ikon_m934",
+  "name": "Andor iKon-M 934 Deep-Cooled CCD",
+  "manufacturer": "Oxford Instruments / Andor",
+  "description": "High-end research-grade back-illuminated CCD with 13um pixels and peak 95% quantum efficiency, deep cooled to -80C.",
+  "optical": {
+    "aperture_m": 0.4,
+    "focal_length_m": 1.2,
+    "filter_band": "V",
+    "central_wavelength_nm": 550.0,
+    "bandwidth_nm": 100.0
+  },
+  "detector": {
+    "width_px": 1024,
+    "height_px": 1024,
+    "pixel_size_um": 13.0,
+    "bit_depth": 16,
+    "full_well_capacity_e": 100000.0,
+    "quantum_efficiency": 0.95
+  },
+  "noise": {
+    "read_noise_e": 2.9,
+    "dark_current_eps": 0.0002,
+    "operating_temp_c": -80.0,
+    "gain_e_per_adu": 1.0,
+    "bias_adu": 500.0,
+    "prnu_percent": 0.8,
+    "hot_pixel_rate": 0.00005
+  }
+}

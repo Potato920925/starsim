@@ -1,0 +1,30 @@
+{
+  "sensor_id": "sony_imx455",
+  "name": "Sony IMX455 Full-Frame BSI CMOS",
+  "manufacturer": "Sony / QHY600 / ZWO ASI6200",
+  "description": "Ultra-high resolution back-illuminated scientific CMOS sensor with 3.76um pixels and low readout noise.",
+  "optical": {
+    "aperture_m": 0.5,
+    "focal_length_m": 2.0,
+    "filter_band": "V",
+    "central_wavelength_nm": 550.0,
+    "bandwidth_nm": 100.0
+  },
+  "detector": {
+    "width_px": 2048,
+    "height_px": 2048,
+    "pixel_size_um": 3.76,
+    "bit_depth": 16,
+    "full_well_capacity_e": 51000.0,
+    "quantum_efficiency": 0.85
+  },
+  "noise": {
+    "read_noise_e": 1.5,
+    "dark_current_eps": 0.003,
+    "operating_temp_c": -10.0,
+    "gain_e_per_adu": 0.78,
+    "bias_adu": 100.0,
+    "prnu_percent": 0.5,
+    "hot_pixel_rate": 0.0001
+  }
+}

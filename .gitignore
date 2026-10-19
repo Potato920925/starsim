@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output and simulation artifacts
+output/
+outputs/
+temp/
+*.fits
+*.fit
+*.tiff
+*.tif
+*.png
+!starsim/web/static/images/*.png
+!data/**/*.png
+
+# Star catalog and ephemeris caches
+.cache/
+*.bsp
+*.tle.cache
+
+# Environments
+env/
+venv/
+ENV/
+.env
+
+# Testing & tool caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor directories
+.vscode/
+.idea/

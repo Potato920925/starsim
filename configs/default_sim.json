@@ -1,0 +1,75 @@
+{
+  "site": {
+    "name": "Lulin Observatory (鹿林天文台)",
+    "lat_deg": 23.4694,
+    "lon_deg": 120.8726,
+    "alt_m": 2862.0
+  },
+  "pointing": {
+    "coord_frame": "radec",
+    "ra_deg": 88.79,
+    "dec_deg": 7.41,
+    "az_deg": 180.0,
+    "alt_deg": 65.0,
+    "roll_deg": 0.0,
+    "tracking_mode": "sidereal"
+  },
+  "atmosphere": {
+    "seeing_fwhm_arcsec": 1.5,
+    "extinction_kv": 0.15,
+    "cloud_cover_percent": 0.0,
+    "bortle_class": 2,
+    "moon_illumination": 0.0,
+    "moon_sep_deg": 90.0
+  },
+  "sensor": {
+    "sensor_id": "sony_imx455",
+    "name": "Sony IMX455 Full-Frame BSI CMOS",
+    "manufacturer": "Sony / QHY / ZWO",
+    "description": "Ultra-high resolution back-illuminated scientific CMOS sensor with 3.76um pixels and low readout noise.",
+    "optical": {
+      "aperture_m": 0.5,
+      "focal_length_m": 2.0,
+      "filter_band": "V",
+      "central_wavelength_nm": 550.0,
+      "bandwidth_nm": 100.0
+    },
+    "detector": {
+      "width_px": 1024,
+      "height_px": 1024,
+      "pixel_size_um": 3.76,
+      "bit_depth": 16,
+      "full_well_capacity_e": 51000.0,
+      "quantum_efficiency": 0.85
+    },
+    "noise": {
+      "read_noise_e": 1.5,
+      "dark_current_eps": 0.003,
+      "operating_temp_c": -10.0,
+      "gain_e_per_adu": 0.78,
+      "bias_adu": 100.0,
+      "prnu_percent": 0.5,
+      "hot_pixel_rate": 0.0001
+    }
+  },
+  "targets": [
+    {
+      "name": "Smart_Transit_RSO",
+      "mode": "smart_transit",
+      "transit_altitude_km": 500.0,
+      "transit_velocity_kms": 7.6,
+      "transit_angle_deg": 40.0,
+      "transit_offset_px": [0.0, 0.0],
+      "visual_magnitude": 7.5,
+      "rcs_m2": 1.0
+    }
+  ],
+  "start_time_iso": "2026-10-19T20:00:00Z",
+  "end_time_iso": "2026-10-19T20:00:06Z",
+  "exposure_time_s": 2.0,
+  "readout_time_s": 0.5,
+  "engine": "gpu",
+  "use_gpu": true,
+  "device_id": 0,
+  "output_dir": "./output"
+}
