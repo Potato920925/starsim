@@ -17,9 +17,9 @@ from .orbit import TargetOrbit
 
 
 class SimulationEngine(str, Enum):
-    GPU = "gpu"            # High-performance native PyTorch/CUDA & NumPy rendering pipeline
-    SATSIM = "satsim"      # SatSim official backend
-    CUSTOM = "custom"      # Backward-compatible alias for GPU pipeline
+    SATSIM = "satsim"      # SatSim native official engine (with GPU/CPU acceleration)
+    GPU = "gpu"            # Backward-compatible alias for SatSim
+    CUSTOM = "custom"      # Backward-compatible alias for SatSim
 
 
 @dataclass
@@ -33,20 +33,14 @@ class StarSimConfig:
     end_time_iso: str = "2026-10-19T20:00:10Z"
     exposure_time_s: float = 2.0
     readout_time_s: float = 0.5
-    engine: SimulationEngine = SimulationEngine.GPU
+    engine: SimulationEngine = SimulationEngine.SATSIM
     use_gpu: bool = True
     device_id: int = 0
     output_dir: str = "./output"
 
     def __post_init__(self):
-        if isinstance(self.engine, str):
-            eng_val = self.engine.lower().strip()
-            if eng_val == "satsim":
-                self.engine = SimulationEngine.SATSIM
-            else:
-                self.engine = SimulationEngine.GPU
-        elif not isinstance(self.engine, SimulationEngine):
-            self.engine = SimulationEngine.GPU
+        # Native SatSim is the standard calculation engine
+        self.engine = SimulationEngine.SATSIM
         self.validate()
 
     def validate(self) -> None:

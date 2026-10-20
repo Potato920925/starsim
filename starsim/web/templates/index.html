@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StarSim - 星空與空間目標 (RSO) 光學影像模擬器</title>
+    <title>StarSim - 星空與空間目標 (RSO) 光學影像模擬器 (SatSim Native)</title>
     <link rel="stylesheet" href="/static/css/style.css?v={{ version }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -14,13 +14,13 @@
             <span class="logo-icon">✨</span>
             <div class="logo-text">
                 <h1>StarSim</h1>
-                <span class="subtitle">基於 SatSim 與 GPU 加速的高保真星空與空間目標光學模擬器</span>
+                <span class="subtitle">基於 SatSim 原生引擎與 GPU/CPU 加速的高保真星空與空間目標光學模擬器</span>
             </div>
         </div>
         <div class="header-badges">
-            <span id="device-badge" class="badge badge-gpu">GPU 偵測中...</span>
+            <span id="device-badge" class="badge badge-gpu">SatSim 引擎就緒</span>
             <button type="button" id="btn-update-live-tles" class="badge badge-action" title="從 CelesTrak 下載最新實時軌道">🔄 實時更新在軌衛星 (CelesTrak)</button>
-            <span class="badge badge-info">v1.1.0</span>
+            <span class="badge badge-info">v2.0 Native</span>
         </div>
     </header>
 
@@ -240,7 +240,7 @@
                     </div>
                     <div class="spec-item">
                         <span class="spec-label">系統增益：</span>
-                        <input type="number" id="sensor-gain" step="0.05" class="spec-input"> e-/ADU
+                        <input type="number" id="sensor-gain" step="0.1" class="spec-input"> e-/ADU
                     </div>
                     <div class="spec-item">
                         <span class="spec-label">偏置底電平：</span>
@@ -317,16 +317,15 @@
             <div class="panel-section">
                 <div class="section-header">
                     <span class="icon">⚡</span>
-                    <h2>計算後端與硬體 (Engine)</h2>
+                    <h2>計算後端與硬體 (SatSim Native)</h2>
                 </div>
-                <div class="form-group">
-                    <div class="radio-group">
-                        <label><input type="radio" name="sim-engine" value="gpu" checked> StarSim 原生 GPU/CPU 加速渲染管線</label>
-                        <label><input type="radio" name="sim-engine" value="satsim"> SatSim 官方後端</label>
-                    </div>
+                <div class="engine-badge-row">
+                    <span class="badge badge-satsim">🚀 SatSim 0.26 原生運算引擎</span>
+                    <input type="hidden" name="sim-engine" value="satsim">
                 </div>
-                <div class="form-group">
-                    <label><input type="checkbox" id="use-gpu-check" checked> 啟用 GPU 加速 (CUDA / Tensor 頻域卷積)</label>
+                <p class="section-desc" style="margin-top: 6px;">全系統光學模擬、點擴散 PSF 與感測器噪聲全面由 SatSim 原生物理核心運算。</p>
+                <div class="form-group" style="margin-top: 10px;">
+                    <label><input type="checkbox" id="use-gpu-check" checked> 啟用 SatSim 原生 GPU 加速 (CUDA / 若無自動切換 CPU)</label>
                 </div>
             </div>
 
@@ -338,13 +337,13 @@
             </div>
         </aside>
 
-        <!-- 右側：可視化視圖區（全天雷達 + 影像檢視器） -->
+        <!-- 右側：可視化視圖區（全天 3D 地球儀 + 影像檢視器） -->
         <section class="viewport-area">
             <!-- 頂部視圖切換與即時狀態列 -->
             <div class="view-header-row">
                 <div class="view-tabs">
                     <button type="button" class="view-tab active" data-tab="image">🌌 模擬光學影像 (Optical Imagery)</button>
-                    <button type="button" class="view-tab" data-tab="skydome">📡 全天球天頂雷達星圖 (Sky Dome Radar)</button>
+                    <button type="button" class="view-tab" data-tab="skydome">🌍 3D 空間地球儀視場 (3D Earth Orbit Visualizer)</button>
                     <button type="button" class="view-tab" data-tab="data">📊 目標與恆星數據庫 (Detected Catalog)</button>
                 </div>
                 <div class="status-bar">
@@ -363,7 +362,7 @@
                 </div>
             </div>
 
-            <!-- Tab 1: 光學影像檢視器 -->
+            <!-- Tab 1: 光學影像檢視器 + 互動縮放與側邊即時檢視窗 -->
             <div id="tab-image-panel" class="tab-panel active">
                 <div class="image-viewer-container">
                     <div class="viewer-toolbar">
@@ -374,23 +373,85 @@
                             <button type="button" class="btn-stretch" data-stretch="asinh">雙曲正弦 Asinh</button>
                             <button type="button" class="btn-stretch" data-stretch="linear">線性 Linear</button>
                         </div>
+                        <div class="zoom-toolbar">
+                            <span class="toolbar-label">影像縮放：</span>
+                            <button type="button" id="btn-zoom-in" class="btn-tool" title="放大 (+)">🔍+</button>
+                            <button type="button" id="btn-zoom-out" class="btn-tool" title="縮小 (-)">🔍-</button>
+                            <button type="button" id="btn-zoom-100" class="btn-tool" title="100% 原始尺寸">1:1</button>
+                            <button type="button" id="btn-zoom-fit" class="btn-tool" title="適配視窗大小">適配視窗 (Fit)</button>
+                            <span id="zoom-level-badge" class="stat-tag">100%</span>
+                        </div>
                         <div class="overlay-toggles">
-                            <label><input type="checkbox" id="toggle-annotations" checked> 顯示標註浮層 (Overlay)</label>
-                            <label><input type="checkbox" id="toggle-burnin"> 切換為燒錄標註圖 (Burn-in)</label>
+                            <label><input type="checkbox" id="toggle-annotations" checked> 顯示標註框 (Overlay)</label>
                         </div>
                     </div>
 
-                    <div class="canvas-wrapper" id="canvas-wrapper">
-                        <img id="sim-image" src="" alt="模擬星空影像預覽" style="display: none;">
-                        <canvas id="overlay-canvas"></canvas>
-                        <div id="placeholder-view" class="placeholder-content">
-                            <div class="placeholder-icon">🌌</div>
-                            <h3>尚未執行模擬</h3>
-                            <p>請在左側配置觀測站點、方向、天候與感測器，然後點擊「開始光學影像模擬」。</p>
+                    <!-- 影像畫布與右側目標檢視窗並列 -->
+                    <div class="viewer-main-content">
+                        <div class="canvas-viewport" id="canvas-viewport">
+                            <div class="canvas-transform-container" id="canvas-transform-container">
+                                <img id="sim-image" src="" alt="模擬星空影像預覽" style="display: none;">
+                                <canvas id="overlay-canvas"></canvas>
+                            </div>
+                            <div id="placeholder-view" class="placeholder-content">
+                                <div class="placeholder-icon">🌌</div>
+                                <h3>尚未執行模擬</h3>
+                                <p>請在左側配置站點、指向、天候與感測器，然後點擊「開始光學影像模擬」。</p>
+                            </div>
+                            <div id="loading-spinner" class="loading-overlay" style="display: none;">
+                                <div class="spinner"></div>
+                                <p id="loading-msg">SatSim 原生引擎正在計算光學 PSF、感測器物理雜訊與目標運動條紋...</p>
+                            </div>
                         </div>
-                        <div id="loading-spinner" class="loading-overlay" style="display: none;">
-                            <div class="spinner"></div>
-                            <p id="loading-msg">正在計算恆星投影、PSF 模糊與感測器物理雜訊...</p>
+
+                        <!-- 側邊目標即時檢視窗 -->
+                        <div class="object-inspector-panel" id="object-inspector-panel">
+                            <div class="inspector-header">
+                                <span class="icon">🎯</span>
+                                <h3>目標與恆星即時檢視</h3>
+                                <span id="inspector-pinned-tag" class="stat-tag" style="display: none;">已固定</span>
+                            </div>
+                            <div id="inspector-empty-state" class="inspector-empty">
+                                <div class="empty-icon">👆</div>
+                                <p>請將滑鼠移至影像中的任一<b>標記框</b><br>此處將即時顯示該目標詳細科研數據。</p>
+                                <span class="hint-small">支援滾輪自由縮放、按住滑鼠拖曳平移</span>
+                            </div>
+                            <div id="inspector-detail-card" class="inspector-card" style="display: none;">
+                                <div class="target-title-row">
+                                    <span id="inspector-badge" class="target-badge">🛰️ 空間目標 (RSO)</span>
+                                    <h4 id="inspector-name">STARLINK-1007</h4>
+                                </div>
+                                <div class="inspector-grid">
+                                    <div class="grid-item">
+                                        <span class="lbl">像素中心 (X, Y)：</span>
+                                        <span id="inspector-pixel" class="val font-mono">--</span>
+                                    </div>
+                                    <div class="grid-item">
+                                        <span class="lbl">天球座標 (RA, Dec)：</span>
+                                        <span id="inspector-radec" class="val font-mono">--</span>
+                                    </div>
+                                    <div class="grid-item">
+                                        <span class="lbl">視星等 (Magnitude)：</span>
+                                        <span id="inspector-vmag" class="val highlight">--</span>
+                                    </div>
+                                    <div class="grid-item">
+                                        <span class="lbl">信噪比 (SNR)：</span>
+                                        <span id="inspector-snr" class="val highlight-green">--</span>
+                                    </div>
+                                    <div class="grid-item">
+                                        <span class="lbl">條紋長度 (Streak)：</span>
+                                        <span id="inspector-streak" class="val">--</span>
+                                    </div>
+                                    <div class="grid-item">
+                                        <span class="lbl">訊號電子數 (Signal)：</span>
+                                        <span id="inspector-electrons" class="val">--</span>
+                                    </div>
+                                    <div class="grid-item full-width">
+                                        <span class="lbl">邊界範圍 [Xmin, Ymin, Xmax, Ymax]：</span>
+                                        <span id="inspector-bbox" class="val font-mono">--</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -407,16 +468,23 @@
                 </div>
             </div>
 
-            <!-- Tab 2: 全天球天頂地平星圖 (Sky Dome Radar) -->
+            <!-- Tab 2: 3D 空間地球儀視場與過境雷達 -->
             <div id="tab-skydome-panel" class="tab-panel">
                 <div class="skydome-container">
                     <div class="skydome-left">
-                        <div class="skydome-canvas-wrapper">
-                            <canvas id="skydome-canvas" width="460" height="460"></canvas>
+                        <div class="earth-globe-wrapper">
+                            <div id="earth-globe-container"></div>
+                            <div class="globe-toolbar">
+                                <button type="button" id="btn-globe-focus-site" class="btn-globe-action">📍 聚焦觀測站點</button>
+                                <button type="button" id="btn-globe-focus-sat" class="btn-globe-action">🛰️ 聚焦過境目標</button>
+                                <button type="button" id="btn-globe-toggle-rotate" class="btn-globe-action">🔄 旋轉地球</button>
+                                <button type="button" id="btn-globe-reset" class="btn-globe-action">🌐 重設視角</button>
+                            </div>
                             <div class="skydome-legend">
-                                <span class="legend-item"><span class="dot dot-fov"></span> 望遠鏡觀測範圍 (FOV)</span>
-                                <span class="legend-item"><span class="dot dot-sat"></span> 在軌衛星 (RSO)</span>
-                                <span class="legend-item"><span class="dot dot-transit"></span> 穿透視場衛星 (Transiting)</span>
+                                <span class="legend-item"><span class="dot dot-site"></span> 📍 地面觀測站</span>
+                                <span class="legend-item"><span class="dot dot-cone"></span> 🔦 望遠鏡 FOV 觀測錐體</span>
+                                <span class="legend-item"><span class="dot dot-sat"></span> 🛰️ 在軌衛星 (RSO)</span>
+                                <span class="legend-item"><span class="dot dot-transit"></span> ⚡ 穿透視場衛星 (Transiting)</span>
                             </div>
                         </div>
                     </div>
@@ -427,7 +495,7 @@
                                 <h2>即時過境與近距 RSO (Transiting / Overhead)</h2>
                                 <button type="button" id="btn-point-nearest-rso" class="btn btn-primary btn-sm" style="margin-left: auto;">🎯 一鍵瞄準最近過境衛星</button>
                             </div>
-                            <p class="section-desc">系統自動追蹤在軌衛星並計算過境角距，點擊「對齊視場」可自動將望遠鏡對準其過境軌道：</p>
+                            <p class="section-desc">系統自動追蹤在軌衛星並計算過境角距，若衛星穿越望遠鏡觀測錐體將動態高亮標記：</p>
                             <div class="transit-table-wrapper">
                                 <table class="data-table" id="transit-table">
                                     <thead>
@@ -446,7 +514,7 @@
                                 </table>
                             </div>
                             <div class="skydome-hint">
-                                💡 點擊全天雷達上的任意位置可直接變更望遠鏡指向，點擊表格中的衛星即可一鍵設為觀測目標！
+                                💡 支援 3D 自由旋轉與滾輪縮放；點擊表格中的「設為目標」將自動對準該衛星過境軌道！
                             </div>
                         </div>
                     </div>
@@ -515,6 +583,9 @@
         </section>
     </main>
 
+    <!-- 3D 視覺化與互動核心腳本 -->
+    <script src="/static/js/three.min.js"></script>
+    <script src="/static/js/OrbitControls.js"></script>
     <script src="/static/js/app.js?v={{ version }}"></script>
 </body>
 </html>

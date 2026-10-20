@@ -1,7 +1,9 @@
 /**
  * StarSim Web Dashboard Frontend Controller
- * Supports Sky Dome Radar with telescope FOV projection, live RSO transits,
- * tracking mode switching, and detailed object annotations export.
+ * - Native SatSim physics engine integration
+ * - 3D Earth Globe visualizer with telescope FOV cone frustum and real-time transiting satellite highlights
+ * - Optical imagery viewer with Zoom & Pan (mouse wheel + drag)
+ * - Clean bounding boxes with hover-based Side Inspector Window
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -14,6 +16,20 @@ document.addEventListener("DOMContentLoaded", () => {
     let playInterval = null;
     let liveSatellites = [];
     let transitingSatellites = [];
+
+    // Zoom & Pan state
+    let zoomScale = 1.0;
+    let panX = 0;
+    let panY = 0;
+    let isPanning = false;
+    let startMouseX = 0;
+    let startMouseY = 0;
+    let startPanX = 0;
+    let startPanY = 0;
+
+    // Inspector & Hover state
+    let hoveredObject = null;
+    let pinnedObject = null;
 
     // DOM Elements
     const sitePresetSelect = document.getElementById("site-preset");
@@ -41,15 +57,36 @@ document.addEventListener("DOMContentLoaded", () => {
     const liveSatSelect = document.getElementById("live-sat-select");
     const presetTleFields = document.getElementById("preset-tle-fields");
     const customTleFields = document.getElementById("custom-tle-fields");
-    const btnUpdateLiveTles = document.getElementById("btn-update-live-tles");
 
     const btnRunSim = document.getElementById("btn-run-simulation");
     const loadingOverlay = document.getElementById("loading-spinner");
     const placeholderView = document.getElementById("placeholder-view");
     const simImage = document.getElementById("sim-image");
     const overlayCanvas = document.getElementById("overlay-canvas");
+    const canvasViewport = document.getElementById("canvas-viewport");
+    const canvasTransformContainer = document.getElementById("canvas-transform-container");
     const toggleAnnotations = document.getElementById("toggle-annotations");
-    const toggleBurnin = document.getElementById("toggle-burnin");
+
+    // Zoom controls
+    const btnZoomIn = document.getElementById("btn-zoom-in");
+    const btnZoomOut = document.getElementById("btn-zoom-out");
+    const btnZoom100 = document.getElementById("btn-zoom-100");
+    const btnZoomFit = document.getElementById("btn-zoom-fit");
+    const zoomLevelBadge = document.getElementById("zoom-level-badge");
+
+    // Inspector elements
+    const inspectorEmptyState = document.getElementById("inspector-empty-state");
+    const inspectorDetailCard = document.getElementById("inspector-detail-card");
+    const inspectorPinnedTag = document.getElementById("inspector-pinned-tag");
+    const inspectorBadge = document.getElementById("inspector-badge");
+    const inspectorName = document.getElementById("inspector-name");
+    const inspectorPixel = document.getElementById("inspector-pixel");
+    const inspectorRadec = document.getElementById("inspector-radec");
+    const inspectorVmag = document.getElementById("inspector-vmag");
+    const inspectorSnr = document.getElementById("inspector-snr");
+    const inspectorStreak = document.getElementById("inspector-streak");
+    const inspectorElectrons = document.getElementById("inspector-electrons");
+    const inspectorBbox = document.getElementById("inspector-bbox");
 
     // Status bar
     const statusText = document.getElementById("status-text");
@@ -75,13 +112,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const viewTabs = document.querySelectorAll(".view-tab");
     const tabPanels = document.querySelectorAll(".tab-panel");
 
-    // Sky Dome Radar
-    const skydomeCanvas = document.getElementById("skydome-canvas");
+    // 3D Globe & Tables
     const transitTableBody = document.getElementById("transit-table-body");
     const tableRsoBody = document.getElementById("table-rso-body");
     const tableStarsBody = document.getElementById("table-stars-body");
 
-    // 1. Tab Switching
+    // ==========================================
+    // 1. Tab Switching & Initialization
+    // ==========================================
     function switchToTab(tabName) {
         viewTabs.forEach(t => {
             if (t.dataset.tab === tabName) {
@@ -97,9 +135,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 p.classList.remove("active");
             }
         });
+
         if (tabName === "skydome") {
-            drawSkyDomeRadar();
+            if (!globeInitialized) {
+                initEarthGlobe();
+            } else {
+                resizeGlobeRenderer();
+            }
+            updateGlobeVisuals();
+            fetchLiveSkyMap();
             fetchTransitingSatellites();
+        } else if (tabName === "image") {
+            setTimeout(drawAnnotations, 50);
         }
     }
 
@@ -109,7 +156,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // 2. Tracking Mode Card Selection
+    // ==========================================
+    // 2. Tracking Mode & Pointing Inputs
+    // ==========================================
     trackingCards.forEach(card => {
         card.addEventListener("click", () => {
             trackingCards.forEach(c => c.classList.remove("active"));
@@ -119,7 +168,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // 3. Coordinate Frame Switch
     coordRadios.forEach(radio => {
         radio.addEventListener("change", (e) => {
             if (e.target.value === "radec") {
@@ -129,16 +177,24 @@ document.addEventListener("DOMContentLoaded", () => {
                 radecInputs.style.display = "none";
                 altazInputs.style.display = "flex";
             }
-            drawSkyDomeRadar();
+            updateGlobeVisuals();
         });
     });
 
-    // 4. Cloud Cover Slider
+    ["point-ra", "point-dec", "point-az", "point-alt"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("input", () => {
+                updateGlobeVisuals();
+            });
+        }
+    });
+
     cloudSlider.addEventListener("input", (e) => {
         cloudVal.textContent = `${e.target.value}%`;
     });
 
-    // 5. Site Presets
+    // Site Presets
     fetch("/api/sites")
         .then(r => r.json())
         .then(data => {
@@ -153,11 +209,25 @@ document.addEventListener("DOMContentLoaded", () => {
             siteLatInput.value = s.lat_deg.toFixed(4);
             siteLonInput.value = s.lon_deg.toFixed(4);
             siteAltInput.value = Math.round(s.alt_m);
+            updateGlobeVisuals();
             fetchLiveSkyMap();
+            fetchTransitingSatellites();
         }
     });
 
-    // 6. Sensor Manager
+    [siteLatInput, siteLonInput, siteAltInput].forEach(inp => {
+        if (inp) {
+            inp.addEventListener("change", () => {
+                updateGlobeVisuals();
+                fetchLiveSkyMap();
+                fetchTransitingSatellites();
+            });
+        }
+    });
+
+    // ==========================================
+    // 3. Sensor Profile Manager
+    // ==========================================
     function updateSensorUI(profile) {
         currentSensorProfile = profile;
         document.getElementById("sensor-aperture").value = profile.optical.aperture_m;
@@ -175,7 +245,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const fovW = (profile.detector.width_px * pixScale) / 3600.0;
         const fovH = (profile.detector.height_px * pixScale) / 3600.0;
         pixelScaleDisplay.textContent = `角解析力: ${pixScale.toFixed(2)}" / 視場: ${fovW.toFixed(2)}°x${fovH.toFixed(2)}°`;
-        drawSkyDomeRadar();
+        updateGlobeVisuals();
     }
 
     function fetchSensors(selectId = null) {
@@ -207,7 +277,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     sensorSelect.addEventListener("change", (e) => loadSensorDetails(e.target.value));
-
     btnUploadSensor.addEventListener("click", () => sensorFileInput.click());
 
     sensorFileInput.addEventListener("change", (e) => {
@@ -275,7 +344,9 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 
-    // 7. Orbit Mode Switch
+    // ==========================================
+    // 4. Orbit Target & Real-Time Tracking
+    // ==========================================
     orbitModeSelect.addEventListener("change", (e) => {
         const val = e.target.value;
         smartOrbitFields.style.display = val === "smart_transit" ? "block" : "none";
@@ -286,23 +357,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (val === "live_sat") {
             fetchLiveSkyMap();
         }
-    });
-
-    // 8. CelesTrak Live TLE Update
-    btnUpdateLiveTles.addEventListener("click", () => {
-        btnUpdateLiveTles.textContent = "⏳ 更新中...";
-        fetch("/api/rso/update?group=visual", { method: "POST" })
-            .then(r => r.json())
-            .then(res => {
-                alert(res.message);
-                btnUpdateLiveTles.textContent = "🔄 實時在軌數據已更新";
-                fetchLiveSkyMap();
-                fetchTransitingSatellites();
-            })
-            .catch(err => {
-                alert(`更新失敗: ${err}`);
-                btnUpdateLiveTles.textContent = "🔄 實時更新在軌衛星 (CelesTrak)";
-            });
     });
 
     function fetchLiveSkyMap() {
@@ -329,7 +383,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         liveSatSelect.appendChild(opt);
                     });
                 }
-                drawSkyDomeRadar();
+                updateGlobeSatellites();
             })
             .catch(err => {
                 console.warn("fetchLiveSkyMap error:", err);
@@ -367,7 +421,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(data => {
                 transitingSatellites = data.transits || [];
                 renderTransitTable(transitingSatellites);
-                drawSkyDomeRadar();
+                updateGlobeSatellites();
             })
             .catch(err => {
                 console.warn("fetchTransitingSatellites error:", err);
@@ -377,14 +431,14 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderTransitTable(transits) {
         transitTableBody.innerHTML = "";
         if (transits.length === 0) {
-            transitTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">此時段天區無過境衛星（可點擊上方「🎯 一鍵瞄準最近過境衛星」或直接點擊天球雷達上的衛星圖示）</td></tr>`;
+            transitTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">此時段天區無過境衛星（可點擊上方「🎯 一鍵瞄準最近過境衛星」或在 3D 地球儀上選取目標）</td></tr>`;
             return;
         }
 
         transits.slice(0, 15).forEach(t => {
             const tr = document.createElement("tr");
             const statusBadge = t.is_in_fov
-                ? `<span style="color:#10b981; font-weight:bold;">⚡ 視場內穿透 (0.0°)</span>`
+                ? `<span style="color:#10b981; font-weight:bold;">⚡ 穿透視場中 (0.0°)</span>`
                 : `<span style="color:#f59e0b;">角距 ${t.min_separation_deg}°</span>`;
 
             tr.innerHTML = `
@@ -398,7 +452,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         data-tle1="${t.tle1}" data-tle2="${t.tle2}" data-name="${t.name}" data-vmag="${t.vmag}"
                         data-ra="${t.target_ra_deg}" data-dec="${t.target_dec_deg}"
                         data-az="${t.target_az_deg}" data-alt="${t.target_alt_deg}">
-                        ${t.is_in_fov ? '設為目標' : '🎯 視場對齊並設為目標'}
+                        ${t.is_in_fov ? '設為目標' : '🎯 對齊並設為目標'}
                     </button>
                 </td>
             `;
@@ -427,7 +481,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 document.getElementById("custom-tle2").value = b.dataset.tle2;
                 document.getElementById("target-vmag").value = b.dataset.vmag;
 
-                drawSkyDomeRadar();
+                updateGlobeVisuals();
                 fetchTransitingSatellites();
                 alert(`🎯 望遠鏡已成功對準「${b.dataset.name}」過境軌道！\n現在點擊「開始光學影像模擬」即可在畫面中央觀測到該衛星！`);
             });
@@ -467,11 +521,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         document.getElementById("custom-tle2").value = s.tle2;
                         document.getElementById("target-vmag").value = s.vmag;
 
-                        drawSkyDomeRadar();
+                        updateGlobeVisuals();
                         fetchTransitingSatellites();
                         alert(`🎯 望遠鏡已自動對準頭頂上空的「${s.name}」(仰角 ${s.alt_deg}°, 方位 ${s.az_deg}°)，並設定為模擬目標！\n點擊「開始光學影像模擬」即可直接看見！`);
                     } else {
-                        alert("當前時刻天空中暫無高仰角衛星，建議點選天球雷達圖自選指向或使用「智慧視場穿透生成」！");
+                        alert("當前時刻天空中暫無高仰角衛星，建議點選地球儀自選指向或使用「智慧視場穿透生成」！");
                     }
                 })
                 .catch(err => {
@@ -481,200 +535,731 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // 9. Interactive Sky Dome Radar Canvas
-    function drawSkyDomeRadar() {
-        if (!skydomeCanvas) return;
-        const ctx = skydomeCanvas.getContext("2d");
-        const w = skydomeCanvas.width;
-        const h = skydomeCanvas.height;
-        const cx = w / 2;
-        const cy = h / 2;
-        const R = w * 0.42;
+    // ==========================================
+    // 5. 3D Earth Globe Visualizer (Three.js)
+    // ==========================================
+    let globeScene, globeCamera, globeRenderer, globeControls;
+    let earthMesh, siteMarkerGroup, fovFrustumGroup, satMarkersGroup;
+    let isGlobeRotating = false;
+    let globeInitialized = false;
+    const EARTH_RADIUS = 100.0;
 
-        ctx.clearRect(0, 0, w, h);
+    function initEarthGlobe() {
+        const container = document.getElementById("earth-globe-container");
+        if (!container || globeInitialized) return;
 
-        // Sky dome base circle
-        ctx.fillStyle = "#030712";
-        ctx.beginPath();
-        ctx.arc(cx, cy, R, 0, 2 * Math.PI);
-        ctx.fill();
+        const w = container.clientWidth || 600;
+        const h = container.clientHeight || 450;
 
-        // Grid circles (Alt = 0, 30, 60 deg)
-        ctx.strokeStyle = "#1e293b";
-        ctx.lineWidth = 1;
-        [0, 30, 60].forEach(alt => {
-            const r = R * (90 - alt) / 90;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-            ctx.stroke();
+        globeScene = new THREE.Scene();
+        globeScene.background = new THREE.Color(0x02040a);
 
-            // Label
-            ctx.fillStyle = "#475569";
-            ctx.font = "9px Inter, sans-serif";
-            ctx.fillText(`${alt}°`, cx + 4, cy - r + 10);
+        globeCamera = new THREE.PerspectiveCamera(45, w / h, 1, 3000);
+        globeCamera.position.set(0, 160, 280);
+
+        globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        globeRenderer.setSize(w, h);
+        globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.innerHTML = "";
+        container.appendChild(globeRenderer.domElement);
+
+        if (THREE.OrbitControls) {
+            globeControls = new THREE.OrbitControls(globeCamera, globeRenderer.domElement);
+            globeControls.enableDamping = true;
+            globeControls.dampingFactor = 0.05;
+            globeControls.minDistance = 115;
+            globeControls.maxDistance = 800;
+            globeControls.autoRotate = false;
+            globeControls.autoRotateSpeed = 0.6;
+        }
+
+        // Ambient Light
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        globeScene.add(ambientLight);
+
+        // Directional Sun Light
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        sunLight.position.set(300, 200, 200);
+        globeScene.add(sunLight);
+
+        // Earth Mesh with Texture
+        const sphereGeo = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(
+            "/static/textures/earth.jpg",
+            (texture) => {
+                const earthMat = new THREE.MeshStandardMaterial({
+                    map: texture,
+                    roughness: 0.85,
+                    metalness: 0.1
+                });
+                earthMesh = new THREE.Mesh(sphereGeo, earthMat);
+                globeScene.add(earthMesh);
+            },
+            undefined,
+            () => {
+                // Fallback procedural Earth if texture fails
+                const earthMat = new THREE.MeshStandardMaterial({
+                    color: 0x1d4ed8,
+                    wireframe: false,
+                    roughness: 0.8
+                });
+                earthMesh = new THREE.Mesh(sphereGeo, earthMat);
+                globeScene.add(earthMesh);
+            }
+        );
+
+        // Subtle Atmosphere glow sphere
+        const atmoGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.015, 64, 64);
+        const atmoMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            transparent: true,
+            opacity: 0.12,
+            side: THREE.BackSide
         });
+        const atmoMesh = new THREE.Mesh(atmoGeo, atmoMat);
+        globeScene.add(atmoMesh);
 
-        // Crosshairs (N-S, E-W)
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - R);
-        ctx.lineTo(cx, cy + R);
-        ctx.moveTo(cx - R, cy);
-        ctx.lineTo(cx + R, cy);
-        ctx.stroke();
+        // Groups for dynamic elements
+        siteMarkerGroup = new THREE.Group();
+        fovFrustumGroup = new THREE.Group();
+        satMarkersGroup = new THREE.Group();
+        globeScene.add(siteMarkerGroup);
+        globeScene.add(fovFrustumGroup);
+        globeScene.add(satMarkersGroup);
 
-        // Cardinal Directions
-        ctx.fillStyle = "#94a3b8";
-        ctx.font = "bold 12px Inter, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("N (北 0°)", cx, cy - R - 14);
-        ctx.fillText("S (南 180°)", cx, cy + R + 14);
-        ctx.fillText("E (東 90°)", cx + R + 24, cy);
-        ctx.fillText("W (西 270°)", cx - R - 24, cy);
-        ctx.fillText("Zenith (天頂 90°)", cx, cy - 8);
+        // Toolbar Buttons
+        const btnFocusSite = document.getElementById("btn-globe-focus-site");
+        if (btnFocusSite) {
+            btnFocusSite.addEventListener("click", focusGlobeOnSite);
+        }
 
-        // Draw Live Satellites
-        liveSatellites.forEach(sat => {
-            const r = R * (90 - Math.max(0, sat.alt_deg)) / 90;
-            const azRad = (sat.az_deg - 90) * Math.PI / 180;
-            const sx = cx + r * Math.cos(azRad);
-            const sy = cy + r * Math.sin(azRad);
+        const btnFocusSat = document.getElementById("btn-globe-focus-sat");
+        if (btnFocusSat) {
+            btnFocusSat.addEventListener("click", focusGlobeOnTransitingSat);
+        }
 
-            // Check if this satellite is transiting
-            const transitMatch = transitingSatellites.find(t => t.name === sat.name);
-            const isInsideFov = transitMatch && transitMatch.is_in_fov;
+        const btnToggleRotate = document.getElementById("btn-globe-toggle-rotate");
+        if (btnToggleRotate) {
+            btnToggleRotate.addEventListener("click", () => {
+                isGlobeRotating = !isGlobeRotating;
+                if (globeControls) globeControls.autoRotate = isGlobeRotating;
+                btnToggleRotate.classList.toggle("active", isGlobeRotating);
+            });
+        }
 
-            if (isInsideFov) {
-                // Pulsing Green Circle for in-FOV transit
-                ctx.strokeStyle = "#10b981";
-                ctx.lineWidth = 2.5;
-                ctx.beginPath();
-                ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
-                ctx.stroke();
+        const btnGlobeReset = document.getElementById("btn-globe-reset");
+        if (btnGlobeReset) {
+            btnGlobeReset.addEventListener("click", () => {
+                if (globeControls) {
+                    globeControls.reset();
+                    globeControls.target.set(0, 0, 0);
+                }
+                globeCamera.position.set(0, 160, 280);
+            });
+        }
 
-                ctx.fillStyle = "#34d399";
-                ctx.beginPath();
-                ctx.arc(sx, sy, 3.5, 0, 2 * Math.PI);
-                ctx.fill();
+        // Raycasting for clicking satellites in 3D
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
 
-                ctx.fillStyle = "#10b981";
-                ctx.font = "bold 10px Inter, sans-serif";
-                ctx.fillText(`🎯 ${sat.name}`, sx + 12, sy - 2);
-            } else if (transitMatch) {
-                // Orange Circle for nearby pass
-                ctx.strokeStyle = "#f59e0b";
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.arc(sx, sy, 5, 0, 2 * Math.PI);
-                ctx.stroke();
+        container.addEventListener("dblclick", (e) => {
+            const rect = container.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / container.clientWidth) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / container.clientHeight) * 2 + 1;
 
-                ctx.fillStyle = "#fbbf24";
-                ctx.beginPath();
-                ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI);
-                ctx.fill();
+            raycaster.setFromCamera(mouse, globeCamera);
+            const intersects = raycaster.intersectObjects(satMarkersGroup.children, true);
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                if (hitMesh.userData && hitMesh.userData.satellite) {
+                    const sat = hitMesh.userData.satellite;
+                    document.getElementById("point-az").value = sat.az_deg;
+                    document.getElementById("point-alt").value = sat.alt_deg;
+                    document.getElementById("point-ra").value = sat.ra_deg;
+                    document.getElementById("point-dec").value = sat.dec_deg;
 
-                ctx.fillStyle = "#fbbf24";
-                ctx.font = "9px Inter, sans-serif";
-                ctx.fillText(`${sat.name}`, sx + 8, sy - 2);
-            } else {
-                ctx.fillStyle = "#38bdf8";
-                ctx.beginPath();
-                ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI);
-                ctx.fill();
+                    orbitModeSelect.value = "custom_tle";
+                    smartOrbitFields.style.display = "none";
+                    liveSatFields.style.display = "none";
+                    presetTleFields.style.display = "none";
+                    customTleFields.style.display = "block";
+
+                    document.getElementById("custom-tle1").value = sat.tle1;
+                    document.getElementById("custom-tle2").value = sat.tle2;
+                    document.getElementById("target-vmag").value = sat.vmag;
+
+                    updateGlobeVisuals();
+                    fetchTransitingSatellites();
+                    alert(`🎯 望遠鏡已鎖定衛星「${sat.name}」！\n(方位: ${sat.az_deg}°, 仰角: ${sat.alt_deg}°)\n現在點擊「開始光學影像模擬」即可看見！`);
+                }
             }
         });
 
-        // Draw Telescope Pointing & FOV Footprint
-        const az = parseFloat(document.getElementById("point-az").value) || 180;
-        const alt = parseFloat(document.getElementById("point-alt").value) || 60;
-        const fovR = R * (90 - Math.max(0, alt)) / 90;
-        const fovAzRad = (az - 90) * Math.PI / 180;
-        const tx = cx + fovR * Math.cos(fovAzRad);
-        const ty = cy + fovR * Math.sin(fovAzRad);
-
-        // FOV Box / Cone representation
-        const prof = buildCurrentSensorProfile();
-        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
-        const fovDeg = (prof.detector.width_px * pixScale) / 3600.0;
-        const fovPx = Math.max(14, (fovDeg / 90) * R * 1.5);
-
-        ctx.strokeStyle = "#ef4444";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(tx - fovPx / 2, ty - fovPx / 2, fovPx, fovPx);
-
-        // Center reticle
-        ctx.fillStyle = "#ef4444";
-        ctx.beginPath();
-        ctx.arc(tx, ty, 3, 0, 2 * Math.PI);
-        ctx.fill();
-
-        ctx.fillStyle = "#f87171";
-        ctx.font = "bold 10px Inter, sans-serif";
-        ctx.fillText(`望遠鏡視場 FOV (${az.toFixed(0)}°, ${alt.toFixed(0)}°)`, tx, ty + fovPx / 2 + 10);
+        globeInitialized = true;
+        animateGlobe();
+        updateGlobeVisuals();
     }
 
-    // Click on Sky Dome to steer telescope or select a satellite
-    skydomeCanvas.addEventListener("click", (e) => {
-        const rect = skydomeCanvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const cx = skydomeCanvas.width / 2;
-        const cy = skydomeCanvas.height / 2;
-        const R = skydomeCanvas.width * 0.42;
+    function resizeGlobeRenderer() {
+        const container = document.getElementById("earth-globe-container");
+        if (!container || !globeRenderer || !globeCamera) return;
+        const w = container.clientWidth || 600;
+        const h = container.clientHeight || 450;
+        globeCamera.aspect = w / h;
+        globeCamera.updateProjectionMatrix();
+        globeRenderer.setSize(w, h);
+    }
 
-        // Check if click hit a satellite dot
-        let hitSat = null;
-        for (const sat of liveSatellites) {
-            const r = R * (90 - Math.max(0, sat.alt_deg)) / 90;
-            const azRad = (sat.az_deg - 90) * Math.PI / 180;
-            const sx = cx + r * Math.cos(azRad);
-            const sy = cy + r * Math.sin(azRad);
-            if (Math.hypot(mx - sx, my - sy) <= 12) {
-                hitSat = sat;
+    window.addEventListener("resize", () => {
+        resizeGlobeRenderer();
+    });
+
+    function animateGlobe() {
+        requestAnimationFrame(animateGlobe);
+        if (globeControls) globeControls.update();
+        if (globeRenderer && globeScene && globeCamera) {
+            globeRenderer.render(globeScene, globeCamera);
+        }
+    }
+
+    // Convert (lat, lon) in degrees to 3D Cartesian on sphere
+    function latLonToVector3(latDeg, lonDeg, radius = EARTH_RADIUS) {
+        const phi = (90 - latDeg) * (Math.PI / 180);
+        const theta = (lonDeg + 180) * (Math.PI / 180);
+        const x = -(radius * Math.sin(phi) * Math.cos(theta));
+        const z = radius * Math.sin(phi) * Math.sin(theta);
+        const y = radius * Math.cos(phi);
+        return new THREE.Vector3(x, y, z);
+    }
+
+    // Compute topocentric local tangent coordinate frame (Up, North, East) at site
+    function getSiteFrame(latDeg, lonDeg) {
+        const sitePos = latLonToVector3(latDeg, lonDeg, EARTH_RADIUS);
+        const u = sitePos.clone().normalize(); // Up
+
+        const northPole = new THREE.Vector3(0, 1, 0);
+        const northProj = northPole.clone().sub(u.clone().multiplyScalar(northPole.dot(u)));
+        const n = northProj.normalize(); // North tangent
+
+        const e = n.clone().cross(u).normalize(); // East tangent
+        return { sitePos, u, n, e };
+    }
+
+    // Compute pointing vector in 3D world space
+    function getTelescopePointingVector(latDeg, lonDeg, azDeg, altDeg) {
+        const { sitePos, u, n, e } = getSiteFrame(latDeg, lonDeg);
+        const azRad = azDeg * (Math.PI / 180);
+        const altRad = altDeg * (Math.PI / 180);
+
+        // Horizontal direction
+        const h = n.clone().multiplyScalar(Math.cos(azRad)).add(e.clone().multiplyScalar(Math.sin(azRad))).normalize();
+        // Combined with altitude
+        const dir = h.clone().multiplyScalar(Math.cos(altRad)).add(u.clone().multiplyScalar(Math.sin(altRad))).normalize();
+        return { sitePos, dir, u };
+    }
+
+    function updateGlobeVisuals() {
+        if (!globeInitialized) return;
+
+        const lat = parseFloat(siteLatInput?.value) || 23.4694;
+        const lon = parseFloat(siteLonInput?.value) || 120.8726;
+        const az = parseFloat(document.getElementById("point-az")?.value) || 180.0;
+        const alt = parseFloat(document.getElementById("point-alt")?.value) || 65.0;
+
+        // 1. Draw Observation Site Pin
+        siteMarkerGroup.clear();
+        const { sitePos, dir, u } = getTelescopePointingVector(lat, lon, az, alt);
+
+        // Amber Site Sphere
+        const pinGeo = new THREE.SphereGeometry(1.8, 16, 16);
+        const pinMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+        const pinMesh = new THREE.Mesh(pinGeo, pinMat);
+        pinMesh.position.copy(sitePos.clone().multiplyScalar(1.008));
+        siteMarkerGroup.add(pinMesh);
+
+        // Site Ring
+        const ringGeo = new THREE.RingGeometry(2.5, 3.2, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.position.copy(sitePos.clone().multiplyScalar(1.002));
+        ringMesh.lookAt(sitePos.clone().multiplyScalar(2));
+        siteMarkerGroup.add(ringMesh);
+
+        // 2. Draw Telescope FOV Cone Frustum
+        fovFrustumGroup.clear();
+        const prof = buildCurrentSensorProfile();
+        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
+        const fovW = (prof.detector.width_px * pixScale) / 3600.0;
+        const fovH = (prof.detector.height_px * pixScale) / 3600.0;
+        const fovRadiusDeg = Math.max(Math.hypot(fovW, fovH) / 2.0, 1.5);
+        const coneLength = 75.0;
+        const baseRadius = coneLength * Math.tan(fovRadiusDeg * (Math.PI / 180) * 1.5);
+
+        // Center line
+        const endPoint = sitePos.clone().add(dir.clone().multiplyScalar(coneLength));
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([sitePos, endPoint]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, linewidth: 2 });
+        fovFrustumGroup.add(new THREE.Line(lineGeo, lineMat));
+
+        // Conical Frustum Mesh
+        const coneGeo = new THREE.ConeGeometry(baseRadius, coneLength, 32, 1, true);
+        coneGeo.translate(0, -coneLength / 2, 0);
+        coneGeo.rotateX(Math.PI / 2);
+
+        const coneMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            transparent: true,
+            opacity: 0.22,
+            side: THREE.DoubleSide
+        });
+        const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+        coneMesh.position.copy(sitePos);
+        coneMesh.lookAt(endPoint);
+        fovFrustumGroup.add(coneMesh);
+
+        // Outer wireframe cone ring
+        const baseRingGeo = new THREE.RingGeometry(baseRadius * 0.96, baseRadius, 32);
+        const baseRingMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide });
+        const baseRingMesh = new THREE.Mesh(baseRingGeo, baseRingMat);
+        baseRingMesh.position.copy(endPoint);
+        baseRingMesh.lookAt(sitePos);
+        fovFrustumGroup.add(baseRingMesh);
+
+        updateGlobeSatellites();
+    }
+
+    function updateGlobeSatellites() {
+        if (!globeInitialized || !satMarkersGroup) return;
+        satMarkersGroup.clear();
+
+        const lat = parseFloat(siteLatInput?.value) || 23.4694;
+        const lon = parseFloat(siteLonInput?.value) || 120.8726;
+        const az = parseFloat(document.getElementById("point-az")?.value) || 180.0;
+        const alt = parseFloat(document.getElementById("point-alt")?.value) || 65.0;
+        const { sitePos, dir } = getTelescopePointingVector(lat, lon, az, alt);
+
+        const prof = buildCurrentSensorProfile();
+        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
+        const fovDeg = Math.max((prof.detector.width_px * pixScale) / 3600.0, 1.5);
+
+        liveSatellites.forEach(sat => {
+            const transitMatch = transitingSatellites.find(t => t.name === sat.name);
+            const isInFov = transitMatch && transitMatch.is_in_fov;
+
+            // Compute 3D Satellite position from topocentric Az/Alt/Dist
+            const satAzRad = sat.az_deg * (Math.PI / 180);
+            const satAltRad = Math.max(0, sat.alt_deg) * (Math.PI / 180);
+            const { n, e, u } = getSiteFrame(lat, lon);
+            const satH = n.clone().multiplyScalar(Math.cos(satAzRad)).add(e.clone().multiplyScalar(Math.sin(satAzRad))).normalize();
+            const satDir = satH.clone().multiplyScalar(Math.cos(satAltRad)).add(u.clone().multiplyScalar(Math.sin(satAltRad))).normalize();
+
+            // Distance scaled to Earth radius (LEO ~ 500-1500km corresponds to 8-25 units)
+            const distKm = sat.distance_km || 1000.0;
+            const distUnits = Math.min(Math.max((distKm / 6378.137) * EARTH_RADIUS, 10), 65);
+            const satPos = sitePos.clone().add(satDir.multiplyScalar(distUnits));
+
+            if (isInFov) {
+                // Highlighting: Transiting through FOV (pulsing emerald beacon)
+                const satGeo = new THREE.SphereGeometry(2.4, 16, 16);
+                const satMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+                const satMesh = new THREE.Mesh(satGeo, satMat);
+                satMesh.position.copy(satPos);
+                satMesh.userData = { satellite: sat, isTransit: true };
+                satMarkersGroup.add(satMesh);
+
+                // Emerald Beacon Ring
+                const ringGeo = new THREE.RingGeometry(3.2, 4.4, 32);
+                const ringMat = new THREE.MeshBasicMaterial({ color: 0x34d399, side: THREE.DoubleSide });
+                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                ringMesh.position.copy(satPos);
+                ringMesh.lookAt(globeCamera.position);
+                satMarkersGroup.add(ringMesh);
+
+                // Line connecting from site to satellite
+                const rayGeo = new THREE.BufferGeometry().setFromPoints([sitePos, satPos]);
+                const rayMat = new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 2 });
+                satMarkersGroup.add(new THREE.Line(rayGeo, rayMat));
+            } else {
+                // Sleek target satellite point
+                const satGeo = new THREE.SphereGeometry(1.2, 12, 12);
+                const satMat = new THREE.MeshBasicMaterial({ color: transitMatch ? 0xf59e0b : 0x38bdf8 });
+                const satMesh = new THREE.Mesh(satGeo, satMat);
+                satMesh.position.copy(satPos);
+                satMesh.userData = { satellite: sat, isTransit: false };
+                satMarkersGroup.add(satMesh);
+            }
+        });
+    }
+
+    function focusGlobeOnSite() {
+        if (!globeControls || !globeCamera) return;
+        const lat = parseFloat(siteLatInput?.value) || 23.4694;
+        const lon = parseFloat(siteLonInput?.value) || 120.8726;
+        const targetPos = latLonToVector3(lat, lon, EARTH_RADIUS);
+        const camPos = targetPos.clone().multiplyScalar(2.1);
+
+        smoothMoveCamera(camPos, targetPos);
+    }
+
+    function focusGlobeOnTransitingSat() {
+        if (!globeControls || !globeCamera) return;
+        if (transitingSatellites.length > 0 && transitingSatellites[0].is_in_fov) {
+            focusGlobeOnSite();
+        } else {
+            focusGlobeOnSite();
+        }
+    }
+
+    function smoothMoveCamera(newPos, newTarget) {
+        if (!globeControls || !globeCamera) return;
+        let t = 0;
+        const startPos = globeCamera.position.clone();
+        const startTarget = globeControls.target.clone();
+
+        function step() {
+            t += 0.05;
+            globeCamera.position.lerpVectors(startPos, newPos, Math.min(t, 1.0));
+            globeControls.target.lerpVectors(startTarget, newTarget, Math.min(t, 1.0));
+            globeControls.update();
+            if (t < 1.0) {
+                requestAnimationFrame(step);
+            }
+        }
+        step();
+    }
+
+    // ==========================================
+    // 6. Image Viewer: Zoom, Pan & Inspector
+    // ==========================================
+    function applyTransform() {
+        if (!canvasTransformContainer) return;
+        canvasTransformContainer.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+        if (zoomLevelBadge) {
+            zoomLevelBadge.textContent = `${Math.round(zoomScale * 100)}%`;
+        }
+    }
+
+    function zoomFit() {
+        if (!simImage || !simImage.naturalWidth || !canvasViewport) return;
+        const vpRect = canvasViewport.getBoundingClientRect();
+        const pad = 24;
+        const scaleX = (vpRect.width - pad) / simImage.naturalWidth;
+        const scaleY = (vpRect.height - pad) / simImage.naturalHeight;
+        zoomScale = Math.min(scaleX, scaleY, 1.0);
+        if (zoomScale < 0.1) zoomScale = 0.5;
+
+        const scaledW = simImage.naturalWidth * zoomScale;
+        const scaledH = simImage.naturalHeight * zoomScale;
+        panX = (vpRect.width - scaledW) / 2;
+        panY = (vpRect.height - scaledH) / 2;
+        applyTransform();
+    }
+
+    btnZoomIn.addEventListener("click", () => {
+        zoomScale = Math.min(zoomScale * 1.25, 10.0);
+        applyTransform();
+    });
+
+    btnZoomOut.addEventListener("click", () => {
+        zoomScale = Math.max(zoomScale * 0.8, 0.2);
+        applyTransform();
+    });
+
+    btnZoom100.addEventListener("click", () => {
+        zoomScale = 1.0;
+        panX = 0;
+        panY = 0;
+        applyTransform();
+    });
+
+    btnZoomFit.addEventListener("click", zoomFit);
+
+    // Mouse wheel zoom centered at cursor
+    canvasViewport.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const rect = canvasViewport.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const delta = e.deltaY < 0 ? 1.15 : 0.87;
+        const newScale = Math.min(Math.max(zoomScale * delta, 0.2), 10.0);
+
+        // Adjust pan to zoom towards mouse position
+        panX = mouseX - (mouseX - panX) * (newScale / zoomScale);
+        panY = mouseY - (mouseY - panY) * (newScale / zoomScale);
+        zoomScale = newScale;
+        applyTransform();
+    }, { passive: false });
+
+    // Drag to Pan
+    canvasViewport.addEventListener("mousedown", (e) => {
+        if (e.button === 0 || e.button === 1) {
+            isPanning = true;
+            startMouseX = e.clientX;
+            startMouseY = e.clientY;
+            startPanX = panX;
+            startPanY = panY;
+            canvasViewport.classList.add("grabbing");
+        }
+    });
+
+    window.addEventListener("mousemove", (e) => {
+        if (isPanning) {
+            panX = startPanX + (e.clientX - startMouseX);
+            panY = startPanY + (e.clientY - startMouseY);
+            applyTransform();
+        }
+    });
+
+    window.addEventListener("mouseup", () => {
+        if (isPanning) {
+            isPanning = false;
+            canvasViewport.classList.remove("grabbing");
+        }
+    });
+
+    // ==========================================
+    // 7. Clean Annotations & Side Inspector
+    // ==========================================
+    function getInteractiveObjectsForCurrentFrame() {
+        if (!simulationResult) return [];
+        const items = [];
+
+        // RSO Targets
+        if (simulationResult.targets) {
+            simulationResult.targets.forEach(tgt => {
+                if (tgt.frame === currentFrameIndex) {
+                    items.push({
+                        type: "rso",
+                        name: tgt.target_name || "RSO Target",
+                        x: tgt.center_pixel ? tgt.center_pixel[0] : 0,
+                        y: tgt.center_pixel ? tgt.center_pixel[1] : 0,
+                        start_pixel: tgt.start_pixel,
+                        end_pixel: tgt.end_pixel,
+                        bbox: tgt.bbox,
+                        vmag: tgt.vmag,
+                        snr: tgt.snr,
+                        streak_length_px: tgt.streak_length_px,
+                        streak_width_px: tgt.streak_width_px,
+                        electrons: tgt.total_electrons,
+                        radec: null
+                    });
+                }
+            });
+        }
+
+        // Stars
+        if (simulationResult.stars) {
+            simulationResult.stars.forEach(s => {
+                if (s.frame === currentFrameIndex) {
+                    items.push({
+                        type: "star",
+                        name: s.name || `Star #${s.star_id || ""}`,
+                        x: s.x_px,
+                        y: s.y_px,
+                        bbox: s.bbox,
+                        vmag: s.vmag,
+                        snr: s.snr,
+                        size_px: s.size_px,
+                        electrons: s.electrons,
+                        radec: s.ra_deg != null ? `(${s.ra_deg.toFixed(3)}°, ${s.dec_deg.toFixed(3)}°)` : null
+                    });
+                }
+            });
+        }
+        return items;
+    }
+
+    function drawAnnotations() {
+        if (!simulationResult || !toggleAnnotations.checked) {
+            clearCanvas();
+            return;
+        }
+
+        if (!simImage || !simImage.naturalWidth) return;
+
+        // Size overlay canvas exactly 1:1 with detector resolution
+        const imgW = simImage.naturalWidth;
+        const imgH = simImage.naturalHeight;
+        overlayCanvas.width = imgW;
+        overlayCanvas.height = imgH;
+        overlayCanvas.style.width = `${imgW}px`;
+        overlayCanvas.style.height = `${imgH}px`;
+        simImage.style.width = `${imgW}px`;
+        simImage.style.height = `${imgH}px`;
+        canvasTransformContainer.style.width = `${imgW}px`;
+        canvasTransformContainer.style.height = `${imgH}px`;
+
+        const ctx = overlayCanvas.getContext("2d");
+        ctx.clearRect(0, 0, imgW, imgH);
+
+        const items = getInteractiveObjectsForCurrentFrame();
+
+        // Draw ONLY clean bounding boxes (NO TEXT ON CANVAS)
+        items.forEach(item => {
+            const isHovered = (hoveredObject && hoveredObject.name === item.name) || (pinnedObject && pinnedObject.name === item.name);
+
+            if (item.type === "rso") {
+                // RSO: Cyan Box
+                ctx.strokeStyle = isHovered ? "#38bdf8" : "rgba(56, 189, 248, 0.85)";
+                ctx.lineWidth = isHovered ? 3.0 : 1.6;
+
+                const [x0, y0, x1, y1] = item.bbox;
+                const bx = Math.min(x0, x1);
+                const by = Math.min(y0, y1);
+                const bw = Math.abs(x1 - x0);
+                const bh = Math.abs(y1 - y0);
+
+                ctx.strokeRect(bx, by, Math.max(bw, 10), Math.max(bh, 10));
+
+                if (isHovered) {
+                    ctx.fillStyle = "rgba(56, 189, 248, 0.15)";
+                    ctx.fillRect(bx, by, Math.max(bw, 10), Math.max(bh, 10));
+                }
+
+                // Streak line if elongated
+                if (item.start_pixel && item.end_pixel && item.streak_length_px > 1) {
+                    ctx.strokeStyle = "#ef4444";
+                    ctx.lineWidth = 1.8;
+                    ctx.beginPath();
+                    ctx.moveTo(item.start_pixel[0], item.start_pixel[1]);
+                    ctx.lineTo(item.end_pixel[0], item.end_pixel[1]);
+                    ctx.stroke();
+                }
+            } else {
+                // Stars: Emerald Green Box
+                ctx.strokeStyle = isHovered ? "#34d399" : "rgba(16, 185, 129, 0.75)";
+                ctx.lineWidth = isHovered ? 2.5 : 1.2;
+
+                const [x0, y0, x1, y1] = item.bbox;
+                const bx = Math.min(x0, x1);
+                const by = Math.min(y0, y1);
+                const bw = Math.abs(x1 - x0);
+                const bh = Math.abs(y1 - y0);
+
+                ctx.strokeRect(bx, by, Math.max(bw, 8), Math.max(bh, 8));
+
+                if (isHovered) {
+                    ctx.fillStyle = "rgba(16, 185, 129, 0.15)";
+                    ctx.fillRect(bx, by, Math.max(bw, 8), Math.max(bh, 8));
+                }
+            }
+        });
+    }
+
+    function clearCanvas() {
+        const ctx = overlayCanvas.getContext("2d");
+        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+
+    // Hit-testing on mouse move over overlay canvas
+    overlayCanvas.addEventListener("mousemove", (e) => {
+        if (!simulationResult) return;
+
+        const rect = overlayCanvas.getBoundingClientRect();
+        const imgX = (e.clientX - rect.left) * (overlayCanvas.width / rect.width);
+        const imgY = (e.clientY - rect.top) * (overlayCanvas.height / rect.height);
+
+        const items = getInteractiveObjectsForCurrentFrame();
+        const margin = 8;
+        let found = null;
+
+        for (const item of items) {
+            const [x0, y0, x1, y1] = item.bbox;
+            const minX = Math.min(x0, x1) - margin;
+            const maxX = Math.max(x0, x1) + margin;
+            const minY = Math.min(y0, y1) - margin;
+            const maxY = Math.max(y0, y1) + margin;
+
+            if (imgX >= minX && imgX <= maxX && imgY >= minY && imgY <= maxY) {
+                found = item;
                 break;
             }
         }
 
-        if (hitSat) {
-            document.getElementById("point-az").value = hitSat.az_deg;
-            document.getElementById("point-alt").value = hitSat.alt_deg;
-            document.getElementById("point-ra").value = hitSat.ra_deg;
-            document.getElementById("point-dec").value = hitSat.dec_deg;
-
-            orbitModeSelect.value = "custom_tle";
-            smartOrbitFields.style.display = "none";
-            liveSatFields.style.display = "none";
-            presetTleFields.style.display = "none";
-            customTleFields.style.display = "block";
-
-            document.getElementById("custom-tle1").value = hitSat.tle1;
-            document.getElementById("custom-tle2").value = hitSat.tle2;
-            document.getElementById("target-vmag").value = hitSat.vmag;
-
-            drawSkyDomeRadar();
-            fetchTransitingSatellites();
-            alert(`🎯 望遠鏡已直接鎖定衛星「${hitSat.name}」！\n(方位角: ${hitSat.az_deg}°, 仰角: ${hitSat.alt_deg}°)\n現在點擊「開始光學影像模擬」即可看見衛星！`);
-            return;
-        }
-
-        const dx = mx - cx;
-        const dy = my - cy;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist <= R) {
-            const alt = Math.max(0, 90 - (dist / R) * 90);
-            let az = (Math.atan2(dy, dx) * 180 / Math.PI) + 90;
-            if (az < 0) az += 360;
-
-            document.getElementById("point-az").value = az.toFixed(1);
-            document.getElementById("point-alt").value = alt.toFixed(1);
-
-            drawSkyDomeRadar();
-            fetchTransitingSatellites();
+        if (found) {
+            overlayCanvas.style.cursor = "pointer";
+            if (!pinnedObject) {
+                hoveredObject = found;
+                updateInspectorPanel(found);
+                drawAnnotations();
+            }
+        } else {
+            overlayCanvas.style.cursor = "crosshair";
+            if (!pinnedObject) {
+                hoveredObject = null;
+                resetInspectorPanel();
+                drawAnnotations();
+            }
         }
     });
 
-    // 10. Assemble Full Configuration
+    overlayCanvas.addEventListener("mouseleave", () => {
+        if (!pinnedObject) {
+            hoveredObject = null;
+            resetInspectorPanel();
+            drawAnnotations();
+        }
+    });
+
+    overlayCanvas.addEventListener("click", () => {
+        if (hoveredObject) {
+            if (pinnedObject && pinnedObject.name === hoveredObject.name) {
+                pinnedObject = null;
+                inspectorPinnedTag.style.display = "none";
+            } else {
+                pinnedObject = hoveredObject;
+                inspectorPinnedTag.style.display = "inline-block";
+                updateInspectorPanel(pinnedObject);
+            }
+            drawAnnotations();
+        } else if (pinnedObject) {
+            pinnedObject = null;
+            inspectorPinnedTag.style.display = "none";
+            resetInspectorPanel();
+            drawAnnotations();
+        }
+    });
+
+    function updateInspectorPanel(item) {
+        if (!item) {
+            resetInspectorPanel();
+            return;
+        }
+
+        inspectorEmptyState.style.display = "none";
+        inspectorDetailCard.style.display = "flex";
+
+        if (item.type === "rso") {
+            inspectorBadge.textContent = "🛰️ 空間目標 (RSO)";
+            inspectorBadge.className = "target-badge badge-rso";
+            inspectorStreak.textContent = `${item.streak_length_px ? item.streak_length_px.toFixed(1) : 0} px (寬 ${item.streak_width_px ? item.streak_width_px.toFixed(1) : 1} px)`;
+        } else {
+            inspectorBadge.textContent = "⭐ 視場恆星 (Star)";
+            inspectorBadge.className = "target-badge badge-star";
+            inspectorStreak.textContent = `${item.size_px ? item.size_px.toFixed(1) : 3} px (點斑光度)`;
+        }
+
+        inspectorName.textContent = item.name;
+        inspectorPixel.textContent = `(${Math.round(item.x)}, ${Math.round(item.y)})`;
+        inspectorRadec.textContent = item.radec ? item.radec : "依相機 WCS 自動校準";
+        inspectorVmag.textContent = item.vmag != null ? `V = ${item.vmag.toFixed(2)}` : "--";
+        inspectorSnr.textContent = item.snr != null ? `${item.snr.toFixed(1)}` : "--";
+        inspectorElectrons.textContent = item.electrons != null ? `${Math.round(item.electrons).toLocaleString()} e-` : "--";
+        inspectorBbox.textContent = item.bbox ? `[${item.bbox.map(v => Math.round(v)).join(", ")}]` : "--";
+    }
+
+    function resetInspectorPanel() {
+        inspectorEmptyState.style.display = "flex";
+        inspectorDetailCard.style.display = "none";
+        inspectorPinnedTag.style.display = "none";
+    }
+
+    toggleAnnotations.addEventListener("change", drawAnnotations);
+
+    // ==========================================
+    // 8. Run Simulation & Native SatSim Execution
+    // ==========================================
     function buildFullConfig() {
         const coordRadio = document.querySelector("input[name='coord-frame']:checked");
         const coordFrame = coordRadio ? coordRadio.value : "radec";
@@ -683,9 +1268,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const trackingMode = trackingRadio ? trackingRadio.value : "sidereal";
 
         const orbitMode = orbitModeSelect ? orbitModeSelect.value : "smart_transit";
-
-        const simRadio = document.querySelector("input[name='sim-engine']:checked");
-        const simEngine = simRadio ? simRadio.value : "gpu";
 
         const gpuCheck = document.getElementById("use-gpu-check");
         const useGpu = gpuCheck ? gpuCheck.checked : true;
@@ -786,13 +1368,12 @@ document.addEventListener("DOMContentLoaded", () => {
             end_time_iso: t1.toISOString(),
             exposure_time_s: expTime,
             readout_time_s: 0.5,
-            engine: simEngine,
+            engine: "satsim",
             use_gpu: useGpu,
             device_id: 0
         };
     }
 
-    // 11. Run Simulation
     btnRunSim.addEventListener("click", () => {
         switchToTab("image");
         let config;
@@ -803,7 +1384,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        statusText.textContent = "運算模擬中 (Computing)...";
+        statusText.textContent = "SatSim 原生運算中...";
         statusText.style.color = "var(--warning)";
         loadingOverlay.style.display = "flex";
         btnRunSim.disabled = true;
@@ -819,7 +1400,7 @@ document.addEventListener("DOMContentLoaded", () => {
             btnRunSim.disabled = false;
 
             if (res.error) {
-                statusText.textContent = "失敗 (Error)";
+                statusText.textContent = "運算失敗 (Error)";
                 statusText.style.color = "var(--danger)";
                 alert(`模擬失敗: ${res.error}`);
                 return;
@@ -827,12 +1408,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
             simulationResult = res;
             currentFrameIndex = 0;
+            pinnedObject = null;
+            hoveredObject = null;
+            resetInspectorPanel();
 
             statusText.textContent = "完成 (Completed)";
             statusText.style.color = "var(--success)";
             statusTime.textContent = `${res.execution_time_s} s`;
             statusDevice.textContent = res.device_info;
-            deviceBadge.textContent = res.device_info;
 
             placeholderView.style.display = "none";
             simImage.style.display = "block";
@@ -861,14 +1444,11 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // 12. Viewport Display
     function updateFrameView(idx) {
         if (!simulationResult || !simulationResult.png_urls || !simulationResult.png_urls[idx]) return;
         currentFrameIndex = idx;
 
-        const useBurnin = toggleBurnin.checked && simulationResult.annotated_png_urls && simulationResult.annotated_png_urls[idx];
-        simImage.src = useBurnin ? simulationResult.annotated_png_urls[idx] : simulationResult.png_urls[idx];
-
+        simImage.src = simulationResult.png_urls[idx];
         frameIndicator.textContent = `第 ${idx + 1} / ${simulationResult.num_frames} 幀`;
         frameSlider.value = idx + 1;
 
@@ -883,121 +1463,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         simImage.onload = () => {
+            if (zoomScale === 1.0 && panX === 0 && panY === 0) {
+                zoomFit();
+            }
             drawAnnotations();
         };
     }
 
-    function drawAnnotations() {
-        if (!simulationResult || !toggleAnnotations.checked || toggleBurnin.checked) {
-            clearCanvas();
-            return;
-        }
-
-        const rect = simImage.getBoundingClientRect();
-        overlayCanvas.width = rect.width;
-        overlayCanvas.height = rect.height;
-
-        const ctx = overlayCanvas.getContext("2d");
-        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-        const imgW = simulationResult.config.sensor.detector.width_px;
-        const imgH = simulationResult.config.sensor.detector.height_px;
-        const scaleX = rect.width / imgW;
-        const scaleY = rect.height / imgH;
-
-        // Draw Stars overlay
-        if (simulationResult.stars) {
-            simulationResult.stars.forEach(s => {
-                if (s.frame === currentFrameIndex) {
-                    const x = s.x_px * scaleX;
-                    const y = (imgH - s.y_px) * scaleY;
-                    const r = Math.max(3, (s.size_px * scaleX) / 2);
-
-                    ctx.strokeStyle = "#10b981";
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.arc(x, y, r, 0, 2 * Math.PI);
-                    ctx.stroke();
-
-                    if (s.vmag <= 10.5) {
-                        ctx.fillStyle = "#34d399";
-                        ctx.font = "10px Inter, sans-serif";
-                        ctx.fillText(`${s.name} V=${s.vmag.toFixed(1)} S=${s.size_px}px`, x + r + 3, y - 3);
-                    }
-                }
-            });
-        }
-
-        // Draw RSO Streak overlay
-        if (simulationResult.targets) {
-            simulationResult.targets.forEach(tgt => {
-                if (tgt.frame === currentFrameIndex) {
-                    const x0 = tgt.start_pixel[0] * scaleX;
-                    const y0 = (imgH - tgt.start_pixel[1]) * scaleY;
-                    const x1 = tgt.end_pixel[0] * scaleX;
-                    const y1 = (imgH - tgt.end_pixel[1]) * scaleY;
-
-                    // Streak line
-                    ctx.strokeStyle = "#ef4444";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(x0, y0);
-                    ctx.lineTo(x1, y1);
-                    ctx.stroke();
-
-                    // Bounding box
-                    ctx.strokeStyle = "#38bdf8";
-                    ctx.lineWidth = 1.5;
-                    const pad = 6;
-                    ctx.strokeRect(
-                        Math.min(x0, x1) - pad,
-                        Math.min(y0, y1) - pad,
-                        Math.abs(x1 - x0) + pad * 2,
-                        Math.abs(y1 - y0) + pad * 2
-                    );
-
-                    // Tag
-                    ctx.fillStyle = "#38bdf8";
-                    ctx.font = "bold 11px Inter, sans-serif";
-                    ctx.fillText(`🛰️ ${tgt.target_name} V=${tgt.vmag} Len=${tgt.streak_length_px}px SNR=${tgt.snr}`, Math.min(x0, x1), Math.min(y0, y1) - 8);
-                }
-            });
-        }
-    }
-
-    function clearCanvas() {
-        const ctx = overlayCanvas.getContext("2d");
-        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    }
-
-    toggleAnnotations.addEventListener("change", drawAnnotations);
-    toggleBurnin.addEventListener("change", () => updateFrameView(currentFrameIndex));
-    window.addEventListener("resize", drawAnnotations);
-
-    // Contrast Stretch Toggles
-    const stretchButtons = document.querySelectorAll(".btn-stretch");
-    stretchButtons.forEach(btn => {
-        btn.addEventListener("click", () => {
-            stretchButtons.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            applyStretch(btn.dataset.stretch);
-        });
-    });
-
-    function applyStretch(mode) {
-        if (!simImage) return;
-        if (mode === "zscale") {
-            simImage.style.filter = "contrast(1.25) brightness(1.1)";
-        } else if (mode === "log") {
-            simImage.style.filter = "contrast(0.9) brightness(1.4)";
-        } else if (mode === "asinh") {
-            simImage.style.filter = "contrast(1.45) brightness(1.15)";
-        } else {
-            simImage.style.filter = "none";
-        }
-    }
-
-    // 13. Populate Data Catalog Tables
+    // ==========================================
+    // 9. Data Catalog & Export
+    // ==========================================
     function populateDataTables(res) {
         // RSO Table
         tableRsoBody.innerHTML = "";
@@ -1006,13 +1481,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                     <td><strong>${t.target_name}</strong></td>
-                    <td>(${t.center_pixel[0]}, ${t.center_pixel[1]})</td>
+                    <td>(${t.center_pixel ? t.center_pixel[0] : '--'}, ${t.center_pixel ? t.center_pixel[1] : '--'})</td>
                     <td>${t.streak_length_px} px</td>
                     <td>${t.streak_width_px} px</td>
-                    <td>[${t.bbox.join(', ')}]</td>
+                    <td>[${t.bbox ? t.bbox.join(', ') : '--'}]</td>
                     <td>${t.vmag}</td>
                     <td><span style="color:#10b981; font-weight:bold;">${t.snr}</span></td>
-                    <td>${t.total_electrons} e-</td>
+                    <td>${Math.round(t.total_electrons).toLocaleString()} e-</td>
                 `;
                 tableRsoBody.appendChild(tr);
             });
@@ -1023,17 +1498,17 @@ document.addEventListener("DOMContentLoaded", () => {
         // Stars Table
         tableStarsBody.innerHTML = "";
         if (res.stars && res.stars.length > 0) {
-            res.stars.slice(0, 100).forEach(s => {
+            res.stars.slice(0, 150).forEach(s => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                     <td>${s.name}</td>
                     <td>(${s.x_px}, ${s.y_px})</td>
-                    <td>(${s.ra_deg}°, ${s.dec_deg}°)</td>
-                    <td>${s.size_px} px (${s.size_arcsec}")</td>
+                    <td>${s.ra_deg != null ? `(${s.ra_deg.toFixed(3)}°, ${s.dec_deg.toFixed(3)}°)` : '--'}</td>
+                    <td>${s.size_px} px</td>
                     <td>${s.vmag}</td>
                     <td>${s.snr}</td>
-                    <td>${s.electrons} e-</td>
-                    <td>${s.is_streak ? '條紋 (Stare)' : '點源 (Point)'}</td>
+                    <td>${Math.round(s.electrons).toLocaleString()} e-</td>
+                    <td>${s.is_streak ? '條紋 (Stare)' : '點斑 (Point)'}</td>
                 `;
                 tableStarsBody.appendChild(tr);
             });
@@ -1042,7 +1517,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 14. Playback Controls
+    // Playback
     frameSlider.addEventListener("input", (e) => updateFrameView(parseInt(e.target.value) - 1));
     btnPrevFrame.addEventListener("click", () => {
         if (!simulationResult) return;
@@ -1071,8 +1546,30 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "/api/download/all";
     });
 
-    // Initial setups
-    drawSkyDomeRadar();
+    // Stretch Filters
+    const stretchButtons = document.querySelectorAll(".btn-stretch");
+    stretchButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            stretchButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            applyStretch(btn.dataset.stretch);
+        });
+    });
+
+    function applyStretch(mode) {
+        if (!simImage) return;
+        if (mode === "zscale") {
+            simImage.style.filter = "contrast(1.25) brightness(1.1)";
+        } else if (mode === "log") {
+            simImage.style.filter = "contrast(0.9) brightness(1.4)";
+        } else if (mode === "asinh") {
+            simImage.style.filter = "contrast(1.45) brightness(1.15)";
+        } else {
+            simImage.style.filter = "none";
+        }
+    }
+
+    // Initial Setups
     fetchSensors("sony_imx455");
     fetchLiveSkyMap();
     fetchTransitingSatellites();

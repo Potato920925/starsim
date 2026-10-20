@@ -238,7 +238,7 @@ def save_annotations_csv(
                 writer.writerow([
                     frame_index + 1, "RSO", t["target_name"],
                     t["center_pixel"][0], t["center_pixel"][1],
-                    "", "", t["vmag"], t["size_px"], t["streak_length_px"],
+                    "", "", t["vmag"], t.get("size_px", t.get("streak_length_px", 1.0)), t.get("streak_length_px", 0.0),
                     t["streak_width_px"], t["snr"], t["total_electrons"]
                 ])
         # Stars

@@ -285,7 +285,8 @@ class LiveSatelliteManager:
                     "ra_deg": round(float(ra_arr[i]), 2),
                     "dec_deg": round(float(dec_arr[i]), 2),
                     "distance_km": round(float(dist_arr[i]), 1),
-                    "vmag": s["vmag"]
+                    "vmag": s["vmag"],
+                    "pos_teme_km": [round(float(xs[i]), 1), round(float(ys[i]), 1), round(float(zs[i]), 1)]
                 })
         return visible
 

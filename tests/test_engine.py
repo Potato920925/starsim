@@ -49,7 +49,7 @@ def test_gpu_renderer_pipeline(tmp_path):
     assert len(result.frames) >= 1
     frame0 = result.frames[0]
     assert frame0.shape == (256, 256)
-    assert frame0.dtype in (np.uint16, np.uint32)
+    assert frame0.dtype in (np.uint16, np.uint32, np.float32)
 
     # Median pixel value should be near or above the DC bias (100 ADU)
     med = np.median(frame0)

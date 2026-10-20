@@ -17,7 +17,6 @@ from ..site import list_preset_observatories, ObservationSite
 from ..pointing import PointingDirection, TrackingMode
 from ..atmosphere import AtmosphericConditions
 from ..orbit import TargetOrbit, OrbitMode, POPULAR_TLES, LiveSatelliteManager
-from ..engine.gpu_renderer import GPURendererEngine
 from ..engine.satsim_bridge import SatSimBridgeEngine
 from ..io import save_simulation_artifacts, apply_contrast_stretch
 
@@ -29,7 +28,6 @@ def create_app(output_dir: str = "./output") -> Flask:
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     os.makedirs(app.config["OUTPUT_DIR"], exist_ok=True)
 
-    gpu_engine = GPURendererEngine()
     satsim_engine = SatSimBridgeEngine()
 
     @app.after_request
@@ -192,13 +190,8 @@ def create_app(output_dir: str = "./output") -> Flask:
             config = StarSimConfig.from_dict(req_data)
             config.output_dir = os.path.join(app.config["OUTPUT_DIR"], "web_run")
 
-            # Choose engine
-            if config.engine == SimulationEngine.SATSIM:
-                engine = satsim_engine
-            else:
-                engine = gpu_engine
-
-            result = engine.run(config)
+            # Execute simulation natively through SatSim
+            result = satsim_engine.run(config)
             artifacts = save_simulation_artifacts(result, config.output_dir)
 
             # Build relative URLs for frontend display
