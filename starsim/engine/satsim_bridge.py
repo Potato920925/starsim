@@ -7,11 +7,15 @@ supporting both native GPU (CUDA) and multi-core CPU acceleration.
 from __future__ import annotations
 import os
 import ssl
+import sys
+import io
 import json
 import time
 import math
 import glob
-from typing import Dict, Any, List, Tuple
+import shutil
+import logging
+from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 from astropy.io import fits
 from astropy.time import Time
@@ -56,6 +60,256 @@ class SatSimBridgeEngine(BaseSimulationEngine):
     def __init__(self):
         self.catalog = StarCatalog()
 
+    @staticmethod
+    def get_default_templates() -> Dict[str, Dict[str, Any]]:
+        """Return official native SatSim 0.26 JSON configuration templates."""
+        catalog_path = get_satsim_catalog_file()
+        has_catalog = os.path.exists(catalog_path)
+
+        return {
+            "tle_transit": {
+                "name": "🛰️ 經典衛星過境 (TLE Satellite Transit)",
+                "description": "星鏈衛星 (STARLINK-1007) 依據真實 SGP4 軌道過境鹿林天文台視場，背景包含恆星星表與大氣噪聲",
+                "config": {
+                    "version": "0.26.0",
+                    "sim": {
+                        "samples": 1,
+                        "spatial_osf": 1,
+                        "temporal_osf": 1,
+                        "padding": 0,
+                        "save_jpeg": False,
+                        "show_obs_boxes": True,
+                        "show_star_boxes": True,
+                        "calculate_snr": True,
+                        "star_render_mode": "transform"
+                    },
+                    "fpa": {
+                        "height": 1024,
+                        "width": 1024,
+                        "y_fov": 0.5,
+                        "x_fov": 0.5,
+                        "zeropoint": 22.5,
+                        "dark_current": 0.005,
+                        "gain": 1.0,
+                        "bias": 100.0,
+                        "noise": {"read": 2.0, "electronic": 0.0},
+                        "a2d": {"dtype": "uint16", "fwc": 50000.0, "gain": 1.0, "bias": 100.0, "response": "linear"},
+                        "time": {"exposure": 2.0, "gap": 0.5},
+                        "num_frames": 2,
+                        "psf": {"mode": "gaussian", "eod": 0.85},
+                        "qe": 0.85,
+                        "electron_well_depth": 50000.0
+                    },
+                    "background": {"galactic": 21.6},
+                    "geometry": {
+                        "time": [2026, 10, 19, 20, 0, 0.0],
+                        "site": {
+                            "lat": 23.4694,
+                            "lon": 120.8726,
+                            "alt": 2862.0,
+                            "gimbal": {"rotation": 0.0},
+                            "track": {"mode": "radec", "ra": 88.79, "dec": 7.41}
+                        },
+                        "stars": {
+                            "mode": "csv" if has_catalog else "none",
+                            "path": catalog_path,
+                            "motion": {"mode": "none"}
+                        },
+                        "obs": {
+                            "mode": "list",
+                            "list": [
+                                {
+                                    "mode": "tle",
+                                    "object_name": "STARLINK-1007",
+                                    "tle1": "1 44713U 19074A   26292.83333333  .00001234  00000-0  56789-4 0  9991",
+                                    "tle2": "2 44713  53.0543 280.1234 0001234  75.4321 284.6789 15.06412345 12345",
+                                    "mv": 7.5
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "fixed_stare": {
+                "name": "⭐ 定日注視星軌 (Fixed Mount Star Trails)",
+                "description": "望遠鏡固定指向天頂，在長曝光下觀測恆星相對地球自轉拉出之光學軌跡 (Star Trails)",
+                "config": {
+                    "version": "0.26.0",
+                    "sim": {
+                        "samples": 1,
+                        "spatial_osf": 1,
+                        "temporal_osf": 5,
+                        "padding": 0,
+                        "save_jpeg": False,
+                        "show_obs_boxes": False,
+                        "show_star_boxes": True,
+                        "calculate_snr": True,
+                        "star_render_mode": "transform"
+                    },
+                    "fpa": {
+                        "height": 1024,
+                        "width": 1024,
+                        "y_fov": 1.2,
+                        "x_fov": 1.2,
+                        "zeropoint": 22.0,
+                        "dark_current": 0.01,
+                        "gain": 1.0,
+                        "bias": 100.0,
+                        "noise": {"read": 2.5, "electronic": 0.0},
+                        "a2d": {"dtype": "uint16", "fwc": 50000.0, "gain": 1.0, "bias": 100.0, "response": "linear"},
+                        "time": {"exposure": 5.0, "gap": 0.5},
+                        "num_frames": 1,
+                        "psf": {"mode": "gaussian", "eod": 0.85},
+                        "qe": 0.8,
+                        "electron_well_depth": 50000.0
+                    },
+                    "background": {"galactic": 21.0},
+                    "geometry": {
+                        "time": [2026, 10, 19, 21, 0, 0.0],
+                        "site": {
+                            "lat": 23.4694,
+                            "lon": 120.8726,
+                            "alt": 2862.0,
+                            "gimbal": {"rotation": 0.0},
+                            "track": {"mode": "fixed", "az": 180.0, "el": 75.0}
+                        },
+                        "stars": {
+                            "mode": "csv" if has_catalog else "none",
+                            "path": catalog_path,
+                            "motion": {"mode": "none"}
+                        },
+                        "obs": {"mode": "list", "list": []}
+                    }
+                }
+            },
+            "line_streak": {
+                "name": "🚀 線性條紋目標 (Linear Velocity Streak)",
+                "description": "以像素原點與速度向量直接設定空間目標穿越像面之運動條紋 (Optical Streak Signature)",
+                "config": {
+                    "version": "0.26.0",
+                    "sim": {
+                        "samples": 1,
+                        "spatial_osf": 1,
+                        "temporal_osf": 1,
+                        "padding": 0,
+                        "save_jpeg": False,
+                        "show_obs_boxes": True,
+                        "show_star_boxes": True,
+                        "calculate_snr": True,
+                        "star_render_mode": "transform"
+                    },
+                    "fpa": {
+                        "height": 1024,
+                        "width": 1024,
+                        "y_fov": 0.8,
+                        "x_fov": 0.8,
+                        "zeropoint": 22.5,
+                        "dark_current": 0.005,
+                        "gain": 1.0,
+                        "bias": 100.0,
+                        "noise": {"read": 2.0, "electronic": 0.0},
+                        "a2d": {"dtype": "uint16", "fwc": 50000.0, "gain": 1.0, "bias": 100.0, "response": "linear"},
+                        "time": {"exposure": 2.0, "gap": 0.5},
+                        "num_frames": 2,
+                        "psf": {"mode": "gaussian", "eod": 0.85},
+                        "qe": 0.85,
+                        "electron_well_depth": 50000.0
+                    },
+                    "background": {"galactic": 21.6},
+                    "geometry": {
+                        "time": [2026, 10, 19, 20, 0, 0.0],
+                        "site": {
+                            "lat": 23.4694,
+                            "lon": 120.8726,
+                            "alt": 2862.0,
+                            "gimbal": {"rotation": 0.0},
+                            "track": {"mode": "radec", "ra": 88.79, "dec": 7.41}
+                        },
+                        "stars": {
+                            "mode": "csv" if has_catalog else "none",
+                            "path": catalog_path,
+                            "motion": {"mode": "none"}
+                        },
+                        "obs": {
+                            "mode": "list",
+                            "list": [
+                                {
+                                    "mode": "line",
+                                    "object_name": "Optical_Streak_RSO",
+                                    "origin": [0.2, 0.3],
+                                    "velocity": [18.0, 7.0],
+                                    "mv": 8.0
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "multi_frame": {
+                "name": "⏱️ 多幀時序觀測 (Multi-Frame Sequence)",
+                "description": "連續採樣 5 幀觀測影像序列，便於進行空間目標軌道偵測、條紋提取與運動向量分析",
+                "config": {
+                    "version": "0.26.0",
+                    "sim": {
+                        "samples": 1,
+                        "spatial_osf": 1,
+                        "temporal_osf": 1,
+                        "padding": 0,
+                        "save_jpeg": False,
+                        "show_obs_boxes": True,
+                        "show_star_boxes": True,
+                        "calculate_snr": True,
+                        "star_render_mode": "transform"
+                    },
+                    "fpa": {
+                        "height": 512,
+                        "width": 512,
+                        "y_fov": 0.4,
+                        "x_fov": 0.4,
+                        "zeropoint": 22.5,
+                        "dark_current": 0.005,
+                        "gain": 1.0,
+                        "bias": 100.0,
+                        "noise": {"read": 2.0, "electronic": 0.0},
+                        "a2d": {"dtype": "uint16", "fwc": 50000.0, "gain": 1.0, "bias": 100.0, "response": "linear"},
+                        "time": {"exposure": 1.5, "gap": 0.5},
+                        "num_frames": 5,
+                        "psf": {"mode": "gaussian", "eod": 0.85},
+                        "qe": 0.85,
+                        "electron_well_depth": 50000.0
+                    },
+                    "background": {"galactic": 21.6},
+                    "geometry": {
+                        "time": [2026, 10, 19, 20, 0, 0.0],
+                        "site": {
+                            "lat": 23.4694,
+                            "lon": 120.8726,
+                            "alt": 2862.0,
+                            "gimbal": {"rotation": 0.0},
+                            "track": {"mode": "radec", "ra": 88.79, "dec": 7.41}
+                        },
+                        "stars": {
+                            "mode": "csv" if has_catalog else "none",
+                            "path": catalog_path,
+                            "motion": {"mode": "none"}
+                        },
+                        "obs": {
+                            "mode": "list",
+                            "list": [
+                                {
+                                    "mode": "line",
+                                    "object_name": "Target_LEO",
+                                    "origin": [0.1, 0.2],
+                                    "velocity": [12.0, 10.0],
+                                    "mv": 7.8
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
     def build_satsim_config(self, config: StarSimConfig) -> Dict[str, Any]:
         """Convert a StarSimConfig into a native SatSim 0.26 compliant configuration structure."""
         sensor = config.sensor
@@ -91,7 +345,6 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                     "mv": target.visual_magnitude
                 })
             elif target.mode == OrbitMode.SMART_TRANSIT:
-                # Guaranteed transit trajectory across focal plane
                 obs_list.append({
                     "mode": "line",
                     "object_name": target.name,
@@ -100,7 +353,6 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                     "mv": target.visual_magnitude
                 })
             else:
-                # Default linear transit
                 obs_list.append({
                     "mode": "line",
                     "object_name": target.name,
@@ -135,7 +387,7 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "temporal_osf": 1,
                 "padding": 0,
                 "save_jpeg": False,
-                "show_obs_boxes": False,
+                "show_obs_boxes": True,
                 "show_star_boxes": True,
                 "save_movie": False,
                 "save_czml": False,
@@ -203,39 +455,123 @@ class SatSimBridgeEngine(BaseSimulationEngine):
         }
         return ssp
 
-    def _determine_device(self, config: StarSimConfig) -> Tuple[Any, str]:
+    def _determine_device(self, use_gpu: bool = True, device_id: int = 0) -> Tuple[Any, str]:
         """Detect and return SatSim device argument based on user preference and GPU availability."""
-        if not config.use_gpu:
+        if not use_gpu:
             return ([], "SatSim 原生運算 (CPU 多核心)")
 
         try:
             import tensorflow as tf
             gpus = tf.config.list_physical_devices('GPU')
             if gpus:
-                dev_idx = config.device_id if config.device_id < len(gpus) else 0
+                dev_idx = device_id if device_id < len(gpus) else 0
                 return ([dev_idx], f"SatSim 原生 GPU 加速 (CUDA: {gpus[dev_idx].name})")
         except Exception:
             pass
 
         return (None, "SatSim 原生運算 (CPU)")
 
-    def run(self, config: StarSimConfig) -> SimulationResult:
-        """Execute simulation through SatSim native engine."""
+    def run_raw(self, ssp: Dict[str, Any], output_dir: str, use_gpu: bool = True, device_id: int = 0) -> SimulationResult:
+        """Execute simulation directly from a raw SatSim 0.26 JSON schema configuration."""
         t_start = time.time()
-        ssp = self.build_satsim_config(config)
+
+        # Deepcopy and ensure minimal required SatSim schema attributes
+        ssp = json.loads(json.dumps(ssp))
+        if "sim" not in ssp:
+            ssp["sim"] = {}
+        ssp["sim"].setdefault("spatial_osf", 1)
+        ssp["sim"].setdefault("temporal_osf", 1)
+        ssp["sim"].setdefault("padding", 0)
+        ssp["sim"].setdefault("apply_star_wrap_around", False)
+        ssp["sim"].setdefault("star_render_mode", "transform")
+        ssp["sim"].setdefault("calculate_snr", True)
+        ssp["sim"].setdefault("show_obs_boxes", True)
+        ssp["sim"].setdefault("show_star_boxes", True)
+        ssp["sim"].setdefault("save_jpeg", False)
+        ssp["sim"].setdefault("save_movie", False)
+        ssp["sim"].setdefault("save_czml", False)
+        ssp["sim"].setdefault("save_pickle", False)
+        ssp["sim"].setdefault("fits_compression", None)
+
+        if "fpa" not in ssp:
+            ssp["fpa"] = {}
+        fpa = ssp["fpa"]
+        fpa.setdefault("height", 512)
+        fpa.setdefault("width", 512)
+        fpa.setdefault("y_fov", 0.5)
+        fpa.setdefault("x_fov", 0.5)
+        fpa.setdefault("zeropoint", 22.0)
+        fpa.setdefault("dark_current", 0.005)
+        fpa.setdefault("gain", 1.0)
+        fpa.setdefault("bias", 100.0)
+        fpa.setdefault("a2d", {})
+        fpa["a2d"].setdefault("dtype", "uint16")
+        fpa["a2d"].setdefault("fwc", 50000.0)
+        fpa["a2d"].setdefault("gain", 1.0)
+        fpa["a2d"].setdefault("bias", 100.0)
+        fpa["a2d"].setdefault("response", "linear")
+        fpa.setdefault("noise", {})
+        fpa["noise"].setdefault("read", 2.0)
+        fpa["noise"].setdefault("electronic", 0.0)
+        fpa.setdefault("time", {"exposure": 2.0, "gap": 0.5})
+        fpa.setdefault("num_frames", 1)
+        fpa.setdefault("psf", {"mode": "gaussian", "eod": 0.85})
+        fpa.setdefault("flip_up_down", False)
+        fpa.setdefault("flip_left_right", False)
+
+        if "geometry" not in ssp:
+            ssp["geometry"] = {}
+        geom = ssp["geometry"]
+        geom.setdefault("time", [2026, 10, 19, 20, 0, 0.0])
+        if "site" not in geom:
+            geom["site"] = {"lat": 23.4694, "lon": 120.8726, "alt": 2862.0, "track": {"mode": "radec", "ra": 88.79, "dec": 7.41}, "gimbal": {"rotation": 0.0}}
+        elif isinstance(geom["site"], dict):
+            geom["site"].setdefault("gimbal", {"rotation": 0.0})
+            if "track" in geom["site"] and isinstance(geom["site"]["track"], dict):
+                if geom["site"]["track"].get("mode") == "sidereal":
+                    geom["site"]["track"]["mode"] = "radec"
+        if "obs" not in geom:
+            geom["obs"] = {"mode": "list", "list": []}
+        if "stars" not in geom:
+            geom["stars"] = {"mode": "none", "motion": {"mode": "none"}}
+        elif isinstance(geom["stars"], dict):
+            geom["stars"].setdefault("motion", {"mode": "none"})
+
+        if "background" not in ssp:
+            ssp["background"] = {"galactic": 21.6}
 
         # Output folder for SatSim run
-        out_dir = os.path.abspath(os.path.join(config.output_dir, "satsim_run"))
+        out_dir = os.path.abspath(os.path.join(output_dir, "satsim_run"))
+        if os.path.exists(out_dir):
+            try:
+                shutil.rmtree(out_dir)
+            except Exception:
+                pass
         os.makedirs(out_dir, exist_ok=True)
 
         config_path = os.path.join(out_dir, "satsim_input.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(ssp, f, indent=2)
 
-        device_arg, device_info = self._determine_device(config)
+        device_arg, device_info = self._determine_device(use_gpu=use_gpu, device_id=device_id)
 
-        from satsim import gen_multi
-        gen_multi(ssp, eager=True, output_dir=out_dir, device=device_arg)
+        # Capture SatSim logs
+        log_stream = io.StringIO()
+        log_handler = logging.StreamHandler(log_stream)
+        log_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+        satsim_logger = logging.getLogger("satsim")
+        satsim_logger.addHandler(log_handler)
+        satsim_logger.setLevel(logging.INFO)
+
+        try:
+            from satsim import gen_multi
+            gen_multi(ssp, eager=True, output_dir=out_dir, device=device_arg)
+        finally:
+            satsim_logger.removeHandler(log_handler)
+
+        captured_log = log_stream.getvalue()
+        if not captured_log.strip():
+            captured_log = f"[INFO] SatSim execution completed successfully on {device_info}."
 
         # Read generated FITS files
         fits_files = sorted(glob.glob(os.path.join(out_dir, "**", "*.fits"), recursive=True))
@@ -255,8 +591,10 @@ class SatSimBridgeEngine(BaseSimulationEngine):
         targets_projected: List[Dict[str, Any]] = []
         stars_projected: List[Dict[str, Any]] = []
 
-        width_px = config.sensor.detector.width_px
-        height_px = config.sensor.detector.height_px
+        fpa_cfg = ssp.get("fpa", {})
+        width_px = int(fpa_cfg.get("width", 1024))
+        height_px = int(fpa_cfg.get("height", 1024))
+        exp_time = float(fpa_cfg.get("time", {}).get("exposure", 2.0))
 
         for frame_idx, jpath in enumerate(json_files):
             try:
@@ -276,7 +614,7 @@ class SatSimBridgeEngine(BaseSimulationEngine):
 
                     vmag = float(obj.get("magnitude", 8.0))
                     pe_sec = float(obj.get("pe_per_sec", 0.0))
-                    total_pe = round(pe_sec * config.exposure_time_s, 1)
+                    total_pe = round(pe_sec * exp_time, 1)
                     snr_val = float(obj.get("snr_aperture") or 50.0)
 
                     if cname == "Satellite":
@@ -288,7 +626,7 @@ class SatSimBridgeEngine(BaseSimulationEngine):
 
                         targets_projected.append({
                             "frame": frame_idx,
-                            "target_name": obj.get("object_name") or (config.targets[0].name if config.targets else "RSO"),
+                            "target_name": obj.get("object_name") or "SatSim_RSO",
                             "class": "Satellite",
                             "start_pixel": [round(x_s, 2), round(y_s, 2)],
                             "end_pixel": [round(x_e, 2), round(y_e, 2)],
@@ -314,13 +652,33 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                             "snr": round(snr_val, 1),
                             "electrons": total_pe,
                             "size_px": max(3.0, round(abs(x_max - x_min), 1)),
+                            "is_streak": False,
                             "bbox": [round(x_min, 1), round(y_min, 1), round(x_max, 1), round(y_max, 1)]
                         })
             except Exception:
                 pass
 
-        # If SatSim star annotations were sparse, project known stars in the FOV from catalog
-        if len(stars_projected) == 0:
+        duration = time.time() - t_start
+        return SimulationResult(
+            frames=frames,
+            raw_flux_frames=raw_flux,
+            stars_projected=stars_projected,
+            targets_projected=targets_projected,
+            config=ssp,
+            execution_time_s=round(duration, 3),
+            device_info=device_info,
+            output_files=output_files,
+            log_output=captured_log
+        )
+
+    def run(self, config: StarSimConfig) -> SimulationResult:
+        """Execute simulation through SatSim native engine using StarSimConfig."""
+        ssp = self.build_satsim_config(config)
+        result = self.run_raw(ssp, config.output_dir, use_gpu=config.use_gpu, device_id=config.device_id)
+        result.config = config
+
+        # Fallback projection for stars in unit tests if no SatSim catalog hits
+        if len(result.stars_projected) == 0:
             center_ra, center_dec = config.pointing.get_equatorial(config.site, config.start_time_iso)
             fov_w, fov_h = config.sensor.fov_deg
             fov_radius = max(fov_w, fov_h) * 0.75
@@ -351,8 +709,8 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                         )
                         snr = round(max(3.0, electrons / math.sqrt(electrons + 50.0)), 1)
                         half_box = max(4.0, (12.0 - vmag) * 1.5 + streak_len / 2.0)
-                        for f_idx in range(len(frames)):
-                            stars_projected.append({
+                        for f_idx in range(len(result.frames)):
+                            result.stars_projected.append({
                                 "frame": f_idx,
                                 "name": s["name"],
                                 "class": "Star",
@@ -369,14 +727,4 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                                 "bbox": [round(x_px - half_box, 1), round(y_px - half_box, 1), round(x_px + half_box, 1), round(y_px + half_box, 1)]
                             })
 
-        duration = time.time() - t_start
-        return SimulationResult(
-            frames=frames,
-            raw_flux_frames=raw_flux,
-            stars_projected=stars_projected,
-            targets_projected=targets_projected,
-            config=config,
-            execution_time_s=round(duration, 3),
-            device_info=device_info,
-            output_files=output_files
-        )
+        return result

@@ -3,348 +3,325 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StarSim - 星空與空間目標 (RSO) 光學影像模擬器 (SatSim Native)</title>
+    <title>SatSim GUI — 空間光學目標模擬器</title>
     <link rel="stylesheet" href="/static/css/style.css?v={{ version }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
+    <!-- 頂部導航列 -->
     <header class="app-header">
         <div class="logo-area">
-            <span class="logo-icon">✨</span>
+            <span class="logo-icon">🚀</span>
             <div class="logo-text">
-                <h1>StarSim</h1>
-                <span class="subtitle">基於 SatSim 原生引擎與 GPU/CPU 加速的高保真星空與空間目標光學模擬器</span>
+                <h1>SatSim Native GUI</h1>
+                <span class="subtitle">Air Force Research Laboratory (AFRL) SatSim 0.26 原生圖形介面</span>
             </div>
         </div>
         <div class="header-badges">
-            <span id="device-badge" class="badge badge-gpu">SatSim 引擎就緒</span>
-            <button type="button" id="btn-update-live-tles" class="badge badge-action" title="從 CelesTrak 下載最新實時軌道">🔄 實時更新在軌衛星 (CelesTrak)</button>
-            <span class="badge badge-info">v2.0 Native</span>
+            <span class="badge badge-info" id="satsim-version-badge">SatSim v0.26.2 原生核心</span>
+            <span class="badge badge-gpu" id="device-badge">⚡ 自動偵測運算硬體</span>
+            <span class="badge badge-action" id="header-status-badge">就緒 (Ready)</span>
         </div>
     </header>
 
-    <main class="main-container">
-        <!-- 左側：參數配置面板 -->
-        <aside class="sidebar">
-            <!-- 觀測方式切換 -->
-            <div class="panel-section highlight-section">
-                <div class="section-header">
-                    <span class="icon">🎯</span>
-                    <h2>望遠鏡觀測方式 (Observation Tracking)</h2>
-                </div>
-                <div class="tracking-cards">
-                    <label class="tracking-card active">
-                        <input type="radio" name="tracking-mode" value="sidereal" checked>
-                        <div class="card-content">
-                            <span class="card-title">🔭 隨恆星運動 (恆星追蹤)</span>
-                            <span class="card-desc">望遠鏡以恆星速率轉動，恆星為銳利點源，RSO 產生運動光條 (Streak)。</span>
-                        </div>
-                    </label>
-                    <label class="tracking-card">
-                        <input type="radio" name="tracking-mode" value="stare">
-                        <div class="card-content">
-                            <span class="card-title">🛑 望遠鏡固定不動 (凝視模式)</span>
-                            <span class="card-desc">望遠鏡固定於地面，恆星因地球自轉拉線條紋，RSO 依其視角速度拉線。</span>
-                        </div>
-                    </label>
-                    <label class="tracking-card">
-                        <input type="radio" name="tracking-mode" value="rate_track">
-                        <div class="card-content">
-                            <span class="card-title">🛰️ 隨衛星運動 (衛星追蹤)</span>
-                            <span class="card-desc">望遠鏡緊盯 RSO，RSO 為清晰點源，背景恆星產生反向拖曳條紋。</span>
-                        </div>
-                    </label>
-                </div>
+    <main class="main-layout">
+        <!-- 左側配置欄：支援「引導參數表單」與「原生 SatSim JSON 編輯器」 -->
+        <aside class="sidebar-panel">
+            <!-- 模式切換按鈕 (Form vs Raw JSON) -->
+            <div class="mode-switch-bar">
+                <button type="button" class="btn-mode-tab active" id="tab-btn-form" data-mode="form">
+                    🎛️ 引導參數表單 (Form)
+                </button>
+                <button type="button" class="btn-mode-tab" id="tab-btn-json" data-mode="json">
+                    📝 原生 SatSim JSON (Code)
+                </button>
             </div>
 
-            <!-- 觀測位置 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">📍</span>
-                    <h2>觀測位置 (Site)</h2>
-                </div>
-                <div class="form-group">
-                    <label for="site-preset">天文台預設：</label>
-                    <select id="site-preset" class="form-control">
-                        <option value="lulin">鹿林天文台 (Lulin Observatory, 台灣)</option>
-                        <option value="tataka">塔塔加觀測點 (Tataka, 台灣)</option>
-                        <option value="mauna_kea">茂納凱亞 (Mauna Kea, 夏威夷)</option>
-                        <option value="paranal">帕拉納爾 VLT (Paranal, 智利)</option>
-                        <option value="kitt_peak">基特峰 (Kitt Peak, 美國)</option>
-                        <option value="custom">自訂座標 (Custom)</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <div class="form-group col">
-                        <label for="site-lat">緯度 (Lat, °)：</label>
-                        <input type="number" id="site-lat" step="0.0001" value="23.4694" class="form-control">
+            <!-- 模式 A: 引導參數表單 -->
+            <div id="mode-form-container" class="config-mode-content active">
+                <!-- 1. 感測器與光學陣列 -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <span class="icon">🔭</span>
+                        <h2>感測器與光學陣列 (FPA & Optics)</h2>
                     </div>
-                    <div class="form-group col">
-                        <label for="site-lon">經度 (Lon, °)：</label>
-                        <input type="number" id="site-lon" step="0.0001" value="120.8726" class="form-control">
+                    <div class="form-group">
+                        <label for="sensor-select">感測器型號預設：</label>
+                        <select id="sensor-select" class="form-control"></select>
                     </div>
-                </div>
-                <div class="form-group">
-                    <label for="site-alt">海拔高度 (Alt, 公尺)：</label>
-                    <input type="number" id="site-alt" step="1" value="2862" class="form-control">
-                </div>
-            </div>
-
-            <!-- 觀測方向 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">🧭</span>
-                    <h2>觀測指向 (Pointing)</h2>
-                </div>
-                <div class="form-group">
-                    <label>座標系統：</label>
-                    <div class="radio-group">
-                        <label><input type="radio" name="coord-frame" value="radec" checked> 赤道座標 (RA / Dec)</label>
-                        <label><input type="radio" name="coord-frame" value="altaz"> 地平座標 (Az / Alt)</label>
-                    </div>
-                </div>
-                <div id="radec-inputs" class="form-row">
-                    <div class="form-group col">
-                        <label for="point-ra">赤經 (RA, °)：</label>
-                        <input type="number" id="point-ra" step="0.01" value="88.79" class="form-control">
-                    </div>
-                    <div class="form-group col">
-                        <label for="point-dec">赤緯 (Dec, °)：</label>
-                        <input type="number" id="point-dec" step="0.01" value="7.41" class="form-control">
-                    </div>
-                </div>
-                <div id="altaz-inputs" class="form-row" style="display: none;">
-                    <div class="form-group col">
-                        <label for="point-az">方位角 (Az, °)：</label>
-                        <input type="number" id="point-az" step="0.1" value="180.0" class="form-control">
-                    </div>
-                    <div class="form-group col">
-                        <label for="point-alt">仰角 (Alt, °)：</label>
-                        <input type="number" id="point-alt" step="0.1" value="65.0" class="form-control">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group col">
-                        <label for="point-roll">旋轉角 (Roll, °)：</label>
-                        <input type="number" id="point-roll" step="0.5" value="0.0" class="form-control">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 當前天候 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">⛅</span>
-                    <h2>當前天候與大氣 (Weather & Atmosphere)</h2>
-                </div>
-                <div class="form-row">
-                    <div class="form-group col">
-                        <label for="seeing-fwhm">視寧度 FWHM (角秒)：</label>
-                        <input type="number" id="seeing-fwhm" step="0.1" min="0.5" max="5.0" value="1.5" class="form-control">
-                    </div>
-                    <div class="form-group col">
-                        <label for="extinction-kv">大氣消光 kv (等/氣團)：</label>
-                        <input type="number" id="extinction-kv" step="0.01" value="0.15" class="form-control">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group col">
-                        <label for="cloud-cover">雲層覆蓋率 (%)：</label>
-                        <input type="range" id="cloud-cover" min="0" max="100" value="0" class="form-range">
-                        <span id="cloud-cover-val" class="range-val">0%</span>
-                    </div>
-                    <div class="form-group col">
-                        <label for="bortle-class">光害等級 (Bortle 1~9)：</label>
-                        <select id="bortle-class" class="form-control">
-                            <option value="1">Class 1 (極佳暗空 21.9 mag)</option>
-                            <option value="2" selected>Class 2 (優良暗空 21.6 mag)</option>
-                            <option value="3">Class 3 (鄉村天空 21.3 mag)</option>
-                            <option value="4">Class 4 (郊區暗空 20.8 mag)</option>
-                            <option value="5">Class 5 (一般郊區 19.8 mag)</option>
-                            <option value="7">Class 7 (都會郊區 18.2 mag)</option>
-                            <option value="9">Class 9 (市中心強光害 16.5 mag)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 觀測時序 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">⏱️</span>
-                    <h2>觀測時序與曝光 (Timing & Exposure)</h2>
-                </div>
-                <div class="form-group">
-                    <label for="start-time">開始時間 (UTC)：</label>
-                    <input type="text" id="start-time" value="2026-10-19T20:00:00Z" class="form-control font-mono">
-                </div>
-                <div class="form-row">
-                    <div class="form-group col">
-                        <label for="exposure-time">單幀曝光時間 (秒)：</label>
-                        <input type="number" id="exposure-time" step="0.5" min="0.1" max="120" value="2.0" class="form-control">
-                    </div>
-                    <div class="form-group col">
-                        <label for="frame-count">模擬總幀數：</label>
-                        <input type="number" id="frame-count" min="1" max="50" value="2" class="form-control">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 感測器型號 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">📷</span>
-                    <h2>感測器型號管理 (Sensor Profiles)</h2>
-                </div>
-                <div class="form-group">
-                    <label for="sensor-select">選擇感測器型號：</label>
-                    <div class="input-action-row">
-                        <select id="sensor-select" class="form-control col"></select>
-                        <button type="button" id="btn-upload-sensor" class="btn btn-secondary">匯入 JSON</button>
-                        <input type="file" id="sensor-file-input" accept=".json" style="display: none;">
-                    </div>
-                </div>
-                <div class="sensor-specs-grid">
-                    <div class="spec-item">
-                        <span class="spec-label">望遠鏡口徑：</span>
-                        <input type="number" id="sensor-aperture" step="0.05" class="spec-input"> m
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">系統焦距：</span>
-                        <input type="number" id="sensor-focal-len" step="0.1" class="spec-input"> m
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">陣列寬度：</span>
-                        <input type="number" id="sensor-width" class="spec-input"> px
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">陣列高度：</span>
-                        <input type="number" id="sensor-height" class="spec-input"> px
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">像元尺寸：</span>
-                        <input type="number" id="sensor-pix-size" step="0.01" class="spec-input"> µm
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">量子效率 (QE)：</span>
-                        <input type="number" id="sensor-qe" step="0.01" class="spec-input">
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">讀出雜訊：</span>
-                        <input type="number" id="sensor-read-noise" step="0.1" class="spec-input"> e-
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">暗電流：</span>
-                        <input type="number" id="sensor-dark-curr" step="0.001" class="spec-input"> e-/p/s
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">系統增益：</span>
-                        <input type="number" id="sensor-gain" step="0.1" class="spec-input"> e-/ADU
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">偏置底電平：</span>
-                        <input type="number" id="sensor-bias" step="1" class="spec-input"> ADU
-                    </div>
-                </div>
-                <div class="sensor-actions">
-                    <button type="button" id="btn-export-sensor" class="btn btn-outline btn-sm">匯出感測器 JSON</button>
-                    <span id="pixel-scale-display" class="stat-tag">角解析力: -- arcsec/px</span>
-                </div>
-            </div>
-
-            <!-- RSO 目標管理 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">🛰️</span>
-                    <h2>空間目標與軌道 (RSO Target)</h2>
-                </div>
-                <div class="form-group">
-                    <label for="orbit-mode">軌道資料來源：</label>
-                    <select id="orbit-mode" class="form-control">
-                        <option value="smart_transit">智慧視場穿透生成 (保證穿越鏡頭)</option>
-                        <option value="live_sat">實時在軌衛星 (CelesTrak 即時軌道)</option>
-                        <option value="preset_tle">經典衛星預設 (ISS / Hubble / Tiangong)</option>
-                        <option value="custom_tle">自訂 TLE 兩行軌道要素</option>
-                    </select>
-                </div>
-                <div id="smart-orbit-fields">
                     <div class="form-row">
                         <div class="form-group col">
-                            <label for="target-alt-km">軌道高度 (km)：</label>
-                            <input type="number" id="target-alt-km" value="500" class="form-control">
+                            <label for="sensor-width">陣列寬度 (px)：</label>
+                            <input type="number" id="sensor-width" value="1024" class="form-control font-mono">
                         </div>
                         <div class="form-group col">
-                            <label for="target-angle">穿越方向角 (°)：</label>
-                            <input type="number" id="target-angle" value="35" class="form-control">
+                            <label for="sensor-height">陣列高度 (px)：</label>
+                            <input type="number" id="sensor-height" value="1024" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="sensor-aperture">口徑 (m)：</label>
+                            <input type="number" id="sensor-aperture" step="0.05" value="0.5" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="sensor-focal-len">焦距 (m)：</label>
+                            <input type="number" id="sensor-focal-len" step="0.1" value="2.0" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="sensor-pix-size">像元 (µm)：</label>
+                            <input type="number" id="sensor-pix-size" step="0.01" value="3.76" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="exposure-time">單幀曝光 (s)：</label>
+                            <input type="number" id="exposure-time" step="0.5" min="0.1" max="120" value="2.0" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="frame-count">模擬總幀數：</label>
+                            <input type="number" id="frame-count" min="1" max="50" value="2" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="sensor-read-noise">讀出噪聲 (e-)：</label>
+                            <input type="number" id="sensor-read-noise" step="0.1" value="2.0" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="sensor-dark-curr">暗電流 (e-/p/s)：</label>
+                            <input type="number" id="sensor-dark-curr" step="0.001" value="0.005" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="sensor-bias">偏置底 (ADU)：</label>
+                            <input type="number" id="sensor-bias" step="1" value="100" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <span id="pixel-scale-display" class="stat-tag" style="margin-top: 6px; display: inline-block;">角解析力: -- arcsec/px</span>
+                </div>
+
+                <!-- 2. 觀測站點與時序指向 -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <span class="icon">🌐</span>
+                        <h2>觀測站點與時序指向 (Site & Pointing)</h2>
+                    </div>
+                    <div class="form-group">
+                        <label for="site-preset">觀測站點預設：</label>
+                        <select id="site-preset" class="form-control">
+                            <option value="lulin" selected>鹿林天文台 (Lulin Observatory, 臺灣 2862m)</option>
+                            <option value="haleakala">茂宜島哈雷阿卡拉 (AMOS / Haleakala, 夏威夷 3058m)</option>
+                            <option value="paranal">帕瑞納天文台 (ESO Paranal, 智利 2635m)</option>
+                            <option value="custom">自訂站點經緯度與高度...</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="site-lat">緯度 (°)：</label>
+                            <input type="number" id="site-lat" step="0.0001" value="23.4694" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="site-lon">經度 (°)：</label>
+                            <input type="number" id="site-lon" step="0.0001" value="120.8726" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="site-alt">海拔 (m)：</label>
+                            <input type="number" id="site-alt" step="1" value="2862" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="start-time">觀測時間 (UTC)：</label>
+                        <input type="text" id="start-time" value="2026-10-19T20:00:00Z" class="form-control font-mono">
+                    </div>
+                    <div class="form-group">
+                        <label>望遠鏡追蹤模式：</label>
+                        <div class="tracking-mode-group">
+                            <label class="radio-inline"><input type="radio" name="tracking-mode" value="sidereal" checked> 恆星赤道追蹤 (Sidereal / RA-Dec)</label>
+                            <label class="radio-inline"><input type="radio" name="tracking-mode" value="stare"> 定日地平注視 (Fixed Stare / Az-Alt)</label>
+                        </div>
+                    </div>
+                    <div id="radec-inputs" class="form-row">
+                        <div class="form-group col">
+                            <label for="point-ra">目標赤經 RA (°)：</label>
+                            <input type="number" id="point-ra" step="0.01" value="88.79" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="point-dec">目標赤緯 Dec (°)：</label>
+                            <input type="number" id="point-dec" step="0.01" value="7.41" class="form-control font-mono">
+                        </div>
+                    </div>
+                    <div id="altaz-inputs" class="form-row" style="display: none;">
+                        <div class="form-group col">
+                            <label for="point-az">方位角 Az (°)：</label>
+                            <input type="number" id="point-az" step="0.1" value="180.0" class="form-control font-mono">
+                        </div>
+                        <div class="form-group col">
+                            <label for="point-alt">仰角 Alt (°)：</label>
+                            <input type="number" id="point-alt" step="0.1" value="75.0" class="form-control font-mono">
                         </div>
                     </div>
                 </div>
-                <div id="live-sat-fields" style="display: none;">
+
+                <!-- 3. 空間目標管理 -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <span class="icon">🛰️</span>
+                        <h2>空間目標與軌道 (RSO Target)</h2>
+                    </div>
                     <div class="form-group">
-                        <label for="live-sat-select">選擇當前可見之實時衛星：</label>
-                        <select id="live-sat-select" class="form-control font-mono"></select>
+                        <label for="rso-mode">目標生成模式：</label>
+                        <select id="rso-mode" class="form-control">
+                            <option value="tle" selected>SatSim 原生 TLE 軌道模型 (SGP4)</option>
+                            <option value="line">SatSim 原生像素運動條紋 (Linear Velocity)</option>
+                        </select>
+                    </div>
+                    <div id="rso-tle-section">
+                        <div class="form-group">
+                            <label for="tle-preset-select">經典衛星預設快速填入：</label>
+                            <select id="tle-preset-select" class="form-control">
+                                <option value="starlink" selected>星鏈衛星 (STARLINK-1007)</option>
+                                <option value="iss">國際太空站 (ISS / ZARYA)</option>
+                                <option value="hubble">哈伯太空望遠鏡 (HST / HUBBLE)</option>
+                                <option value="tiangong">天宮太空站 (CSS / TIANGONG)</option>
+                                <option value="custom">自訂 TLE 兩行軌道要素...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="custom-tle1">TLE Line 1：</label>
+                            <input type="text" id="custom-tle1" value="1 44713U 19074A   26292.83333333  .00001234  00000-0  56789-4 0  9991" class="form-control font-mono" style="font-size: 11px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="custom-tle2">TLE Line 2：</label>
+                            <input type="text" id="custom-tle2" value="2 44713  53.0543 280.1234 0001234  75.4321 284.6789 15.06412345 12345" class="form-control font-mono" style="font-size: 11px;">
+                        </div>
+                    </div>
+                    <div id="rso-line-section" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group col">
+                                <label for="line-origin-x">原點 X [0~1]：</label>
+                                <input type="number" id="line-origin-x" step="0.05" value="0.2" class="form-control font-mono">
+                            </div>
+                            <div class="form-group col">
+                                <label for="line-origin-y">原點 Y [0~1]：</label>
+                                <input type="number" id="line-origin-y" step="0.05" value="0.3" class="form-control font-mono">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group col">
+                                <label for="line-vel-x">速度 Vx (px/s)：</label>
+                                <input type="number" id="line-vel-x" step="1" value="18" class="form-control font-mono">
+                            </div>
+                            <div class="form-group col">
+                                <label for="line-vel-y">速度 Vy (px/s)：</label>
+                                <input type="number" id="line-vel-y" step="1" value="7" class="form-control font-mono">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="target-vmag">目標視星等 (Visual Magnitude)：</label>
+                        <input type="number" id="target-vmag" step="0.5" value="7.5" class="form-control font-mono">
                     </div>
                 </div>
-                <div id="preset-tle-fields" style="display: none;">
+
+                <!-- 4. 星表與背景環境 -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <span class="icon">🌌</span>
+                        <h2>星表與背景環境 (Stars & Background)</h2>
+                    </div>
                     <div class="form-group">
-                        <label for="tle-preset-select">選擇衛星：</label>
-                        <select id="tle-preset-select" class="form-control">
-                            <option value="iss">國際太空站 (ISS / ZARYA)</option>
-                            <option value="tiangong">天宮太空站 (CSS / TIANGONG)</option>
-                            <option value="hubble">哈伯太空望遠鏡 (HST / HUBBLE)</option>
-                            <option value="starlink">星鏈衛星 (STARLINK-1007)</option>
+                        <label><input type="checkbox" id="enable-star-catalog" checked> 載入 SatSim 原生 CSV 恆星星表 (5,000+ 星)</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="bortle-class">天空背景光害 (Bortle 1~9)：</label>
+                        <select id="bortle-class" class="form-control">
+                            <option value="1">Class 1 (極佳暗空 21.9 mag/arcsec²)</option>
+                            <option value="2" selected>Class 2 (優良暗空 21.6 mag/arcsec²)</option>
+                            <option value="3">Class 3 (鄉村天空 21.3 mag/arcsec²)</option>
+                            <option value="4">Class 4 (郊區暗空 20.8 mag/arcsec²)</option>
+                            <option value="5">Class 5 (一般郊區 19.8 mag/arcsec²)</option>
+                            <option value="7">Class 7 (都會郊區 18.2 mag/arcsec²)</option>
+                            <option value="9">Class 9 (市中心強光害 16.5 mag/arcsec²)</option>
                         </select>
                     </div>
                 </div>
-                <div id="custom-tle-fields" style="display: none;">
-                    <div class="form-group">
-                        <label for="custom-tle1">TLE Line 1：</label>
-                        <input type="text" id="custom-tle1" class="form-control font-mono" placeholder="1 25544U 98067A ...">
+
+                <!-- 5. SatSim 模擬運算設定 -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <span class="icon">⚡</span>
+                        <h2>SatSim 運算參數 (Simulation Parameters)</h2>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="sim-spatial-osf">空間超採樣 (Spatial OSF)：</label>
+                            <select id="sim-spatial-osf" class="form-control">
+                                <option value="1" selected>1 (標準速度)</option>
+                                <option value="2">2 (高精度次像素)</option>
+                            </select>
+                        </div>
+                        <div class="form-group col">
+                            <label for="sim-temporal-osf">時間超採樣 (Temporal OSF)：</label>
+                            <select id="sim-temporal-osf" class="form-control">
+                                <option value="1" selected>1 (標準)</option>
+                                <option value="5">5 (條紋平滑)</option>
+                                <option value="10">10 (極致平滑)</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label for="custom-tle2">TLE Line 2：</label>
-                        <input type="text" id="custom-tle2" class="form-control font-mono" placeholder="2 25544 ...">
+                        <label><input type="checkbox" id="use-gpu-check" checked> 啟用 SatSim 原生 GPU 加速 (若無自動支援 CPU 多核心)</label>
                     </div>
-                </div>
-                <div class="form-group">
-                    <label for="target-vmag">目標視星等 (V-mag)：</label>
-                    <input type="number" id="target-vmag" step="0.5" value="7.5" class="form-control">
                 </div>
             </div>
 
-            <!-- 計算引擎 -->
-            <div class="panel-section">
-                <div class="section-header">
-                    <span class="icon">⚡</span>
-                    <h2>計算後端與硬體 (SatSim Native)</h2>
-                </div>
-                <div class="engine-badge-row">
-                    <span class="badge badge-satsim">🚀 SatSim 0.26 原生運算引擎</span>
-                    <input type="hidden" name="sim-engine" value="satsim">
-                </div>
-                <p class="section-desc" style="margin-top: 6px;">全系統光學模擬、點擴散 PSF 與感測器噪聲全面由 SatSim 原生物理核心運算。</p>
-                <div class="form-group" style="margin-top: 10px;">
-                    <label><input type="checkbox" id="use-gpu-check" checked> 啟用 SatSim 原生 GPU 加速 (CUDA / 若無自動切換 CPU)</label>
+            <!-- 模式 B: 原生 SatSim JSON 編輯器 -->
+            <div id="mode-json-container" class="config-mode-content" style="display: none;">
+                <div class="panel-section h-full-json">
+                    <div class="json-actions-bar">
+                        <div class="form-group" style="margin-bottom: 6px;">
+                            <label for="json-template-select">載入 SatSim 官方原生範本：</label>
+                            <select id="json-template-select" class="form-control font-mono">
+                                <option value="tle_transit">🛰️ 經典衛星過境 (TLE Satellite Transit)</option>
+                                <option value="fixed_stare">⭐ 定日注視星軌 (Fixed Mount Star Trails)</option>
+                                <option value="line_streak">🚀 線性條紋目標 (Linear Velocity Streak)</option>
+                                <option value="multi_frame">⏱️ 多幀時序觀測 (Multi-Frame Sequence)</option>
+                            </select>
+                        </div>
+                        <div class="json-btn-row">
+                            <button type="button" id="btn-sync-form-to-json" class="btn btn-secondary btn-sm" title="將左側表單設定轉換為 SatSim 原生 JSON">🔄 從表單同步至 JSON</button>
+                            <button type="button" id="btn-sync-json-to-form" class="btn btn-outline btn-sm" title="解析當前 JSON 並更新表單輸入項">🔄 從 JSON 同步至表單</button>
+                            <button type="button" id="btn-export-json" class="btn btn-outline btn-sm">📤 匯出 JSON</button>
+                            <button type="button" id="btn-import-json" class="btn btn-outline btn-sm">📥 匯入 JSON</button>
+                            <input type="file" id="json-file-input" accept=".json" style="display: none;">
+                        </div>
+                    </div>
+                    <div class="json-editor-wrapper">
+                        <textarea id="satsim-json-editor" class="json-textarea font-mono" spellcheck="false" placeholder="請在此處貼上或編輯 SatSim 0.26 JSON 配置..."></textarea>
+                    </div>
+                    <div id="json-status-msg" class="json-status-info">格式驗證：就緒</div>
                 </div>
             </div>
 
+            <!-- 底部主要操作：開始模擬 -->
             <div class="action-section">
                 <button type="button" id="btn-run-simulation" class="btn btn-primary btn-large">
                     <span class="btn-icon">🚀</span>
-                    <span>開始光學影像模擬 (Run Simulation)</span>
+                    <span>開始 SatSim 原生運算 (Run SatSim)</span>
                 </button>
             </div>
         </aside>
 
-        <!-- 右側：可視化視圖區（全天 3D 地球儀 + 影像檢視器） -->
+        <!-- 右側主要可視化與結果分析區 -->
         <section class="viewport-area">
-            <!-- 頂部視圖切換與即時狀態列 -->
+            <!-- 頂部視圖切換與狀態列 -->
             <div class="view-header-row">
                 <div class="view-tabs">
-                    <button type="button" class="view-tab active" data-tab="image">🌌 模擬光學影像 (Optical Imagery)</button>
-                    <button type="button" class="view-tab" data-tab="skydome">🌍 3D 空間地球儀視場 (3D Earth Orbit Visualizer)</button>
+                    <button type="button" class="view-tab active" data-tab="image">🌌 模擬影像檢視 (Optical Imagery)</button>
                     <button type="button" class="view-tab" data-tab="data">📊 目標與恆星數據庫 (Detected Catalog)</button>
+                    <button type="button" class="view-tab" data-tab="console">💻 SatSim 運算終端日誌 (Execution Console)</button>
                 </div>
                 <div class="status-bar">
                     <div class="status-item">
@@ -362,12 +339,12 @@
                 </div>
             </div>
 
-            <!-- Tab 1: 光學影像檢視器 + 互動縮放與側邊即時檢視窗 -->
+            <!-- Tab 1: 光學影像檢視器 + 互動縮放與側邊目標即時檢視窗 -->
             <div id="tab-image-panel" class="tab-panel active">
                 <div class="image-viewer-container">
                     <div class="viewer-toolbar">
                         <div class="stretch-selector">
-                            <span class="toolbar-label">對比度拉伸：</span>
+                            <span class="toolbar-label">天文對比拉伸：</span>
                             <button type="button" class="btn-stretch active" data-stretch="zscale">Z-Scale</button>
                             <button type="button" class="btn-stretch" data-stretch="log">對數 Log</button>
                             <button type="button" class="btn-stretch" data-stretch="asinh">雙曲正弦 Asinh</button>
@@ -394,13 +371,13 @@
                                 <canvas id="overlay-canvas"></canvas>
                             </div>
                             <div id="placeholder-view" class="placeholder-content">
-                                <div class="placeholder-icon">🌌</div>
-                                <h3>尚未執行模擬</h3>
-                                <p>請在左側配置站點、指向、天候與感測器，然後點擊「開始光學影像模擬」。</p>
+                                <div class="placeholder-icon">🚀</div>
+                                <h3>SatSim 原生模擬環境已就緒</h3>
+                                <p>請在左側配置或選擇 SatSim JSON 範本，然後點擊「開始 SatSim 原生運算」。</p>
                             </div>
                             <div id="loading-spinner" class="loading-overlay" style="display: none;">
                                 <div class="spinner"></div>
-                                <p id="loading-msg">SatSim 原生引擎正在計算光學 PSF、感測器物理雜訊與目標運動條紋...</p>
+                                <p id="loading-msg">SatSim 0.26 原生核心正在計算光學 PSF、感測器物理雜訊與目標運動條紋...</p>
                             </div>
                         </div>
 
@@ -414,7 +391,7 @@
                             <div id="inspector-empty-state" class="inspector-empty">
                                 <div class="empty-icon">👆</div>
                                 <p>請將滑鼠移至影像中的任一<b>標記框</b><br>此處將即時顯示該目標詳細科研數據。</p>
-                                <span class="hint-small">支援滾輪自由縮放、按住滑鼠拖曳平移</span>
+                                <span class="hint-small">支援滑鼠滾輪縮放、按住滑鼠左鍵平移</span>
                             </div>
                             <div id="inspector-detail-card" class="inspector-card" style="display: none;">
                                 <div class="target-title-row">
@@ -427,7 +404,7 @@
                                         <span id="inspector-pixel" class="val font-mono">--</span>
                                     </div>
                                     <div class="grid-item">
-                                        <span class="lbl">天球座標 (RA, Dec)：</span>
+                                        <span class="lbl">天球赤道 (RA, Dec)：</span>
                                         <span id="inspector-radec" class="val font-mono">--</span>
                                     </div>
                                     <div class="grid-item">
@@ -439,7 +416,7 @@
                                         <span id="inspector-snr" class="val highlight-green">--</span>
                                     </div>
                                     <div class="grid-item">
-                                        <span class="lbl">條紋長度 (Streak)：</span>
+                                        <span class="lbl">運動條紋 (Streak)：</span>
                                         <span id="inspector-streak" class="val">--</span>
                                     </div>
                                     <div class="grid-item">
@@ -468,64 +445,11 @@
                 </div>
             </div>
 
-            <!-- Tab 2: 3D 空間地球儀視場與過境雷達 -->
-            <div id="tab-skydome-panel" class="tab-panel">
-                <div class="skydome-container">
-                    <div class="skydome-left">
-                        <div class="earth-globe-wrapper">
-                            <div id="earth-globe-container"></div>
-                            <div class="globe-toolbar">
-                                <button type="button" id="btn-globe-focus-site" class="btn-globe-action">📍 聚焦觀測站點</button>
-                                <button type="button" id="btn-globe-focus-sat" class="btn-globe-action">🛰️ 聚焦過境目標</button>
-                                <button type="button" id="btn-globe-toggle-rotate" class="btn-globe-action">🔄 旋轉地球</button>
-                                <button type="button" id="btn-globe-reset" class="btn-globe-action">🌐 重設視角</button>
-                            </div>
-                            <div class="skydome-legend">
-                                <span class="legend-item"><span class="dot dot-site"></span> 📍 地面觀測站</span>
-                                <span class="legend-item"><span class="dot dot-cone"></span> 🔦 望遠鏡 FOV 觀測錐體</span>
-                                <span class="legend-item"><span class="dot dot-sat"></span> 🛰️ 在軌衛星 (RSO)</span>
-                                <span class="legend-item"><span class="dot dot-transit"></span> ⚡ 穿透視場衛星 (Transiting)</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="skydome-right">
-                        <div class="panel-section h-full">
-                            <div class="section-header">
-                                <span class="icon">🎯</span>
-                                <h2>即時過境與近距 RSO (Transiting / Overhead)</h2>
-                                <button type="button" id="btn-point-nearest-rso" class="btn btn-primary btn-sm" style="margin-left: auto;">🎯 一鍵瞄準最近過境衛星</button>
-                            </div>
-                            <p class="section-desc">系統自動追蹤在軌衛星並計算過境角距，若衛星穿越望遠鏡觀測錐體將動態高亮標記：</p>
-                            <div class="transit-table-wrapper">
-                                <table class="data-table" id="transit-table">
-                                    <thead>
-                                        <tr>
-                                            <th>衛星名稱</th>
-                                            <th>穿越時刻</th>
-                                            <th>最小角距</th>
-                                            <th>視星等</th>
-                                            <th>角速度</th>
-                                            <th>操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="transit-table-body">
-                                        <tr><td colspan="6" class="text-center text-muted">正在搜尋穿越視場之衛星...</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="skydome-hint">
-                                💡 支援 3D 自由旋轉與滾輪縮放；點擊表格中的「設為目標」將自動對準該衛星過境軌道！
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab 3: 目標與恆星數據庫 (Detected Catalog) -->
+            <!-- Tab 2: 目標與恆星數據庫 (Detected Catalog) -->
             <div id="tab-data-panel" class="tab-panel">
                 <div class="data-catalog-container">
                     <div class="catalog-section">
-                        <h3>🛰️ 空間目標 (RSO Targets) 物理特徵列表</h3>
+                        <h3>🛰️ SatSim 原生檢測目標 (Detected RSO Targets)</h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
@@ -533,7 +457,7 @@
                                     <th>中心像素 (X, Y)</th>
                                     <th>條紋長度 (px)</th>
                                     <th>條紋寬度 (px)</th>
-                                    <th>邊界框 [X0, Y0, X1, Y1]</th>
+                                    <th>SatNet 邊界框 [X0, Y0, X1, Y1]</th>
                                     <th>視星等 (V)</th>
                                     <th>訊噪比 (SNR)</th>
                                     <th>總電子數 (e-)</th>
@@ -545,47 +469,55 @@
                         </table>
                     </div>
                     <div class="catalog-section">
-                        <h3>⭐ 視場內恆星 (Detected Stars) 列表</h3>
+                        <h3>⭐ 視場內恆星 (Detected Stars)</h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>恆星編號 / 名稱</th>
+                                    <th>恆星名稱 / 編號</th>
                                     <th>像素座標 (X, Y)</th>
                                     <th>天球座標 (RA, Dec)</th>
-                                    <th>光斑大小 (px / arcsec)</th>
+                                    <th>光斑大小 (px)</th>
                                     <th>視星等 (V)</th>
                                     <th>訊噪比 (SNR)</th>
                                     <th>收集電子數 (e-)</th>
-                                    <th>型態</th>
                                 </tr>
                             </thead>
                             <tbody id="table-stars-body">
-                                <tr><td colspan="8" class="text-center text-muted">尚未執行模擬</td></tr>
+                                <tr><td colspan="7" class="text-center text-muted">尚未執行模擬</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
 
-            <!-- 底部資料與匯出面板 -->
+            <!-- Tab 3: SatSim 運算終端日誌 (Execution Console) -->
+            <div id="tab-console-panel" class="tab-panel">
+                <div class="console-wrapper">
+                    <div class="console-header">
+                        <span class="console-title">💻 SatSim 0.26 Console Log Stream</span>
+                        <button type="button" id="btn-clear-console" class="btn btn-outline btn-sm">清除記錄</button>
+                    </div>
+                    <pre id="console-output" class="console-body font-mono">系統已就緒，等待執行 SatSim 模擬任務...</pre>
+                </div>
+            </div>
+
+            <!-- 底部科研成果下載面板 -->
             <div class="bottom-export-panel">
                 <div class="export-actions">
                     <a id="btn-download-fits" class="btn btn-outline disabled" download>下載 FITS (含 WCS 標頭)</a>
                     <a id="btn-download-png" class="btn btn-outline disabled" download>下載原圖 PNG</a>
-                    <a id="btn-download-annotated-png" class="btn btn-outline disabled" download>下載標註影像 PNG</a>
+                    <a id="btn-download-satnet" class="btn btn-outline disabled" download>下載 SatNet 標註 JSON</a>
                     <a id="btn-download-csv" class="btn btn-outline disabled" download>下載標註數據 CSV</a>
                     <button type="button" id="btn-download-all" class="btn btn-secondary disabled">打包全部成果 (ZIP)</button>
                 </div>
                 <div class="info-footer">
-                    <span>提示：標註影像已燒錄目標位置、大小與星等資訊；CSV 與 FITS 完全符合天文學科研標準。</span>
+                    <span>提示：所有 FITS、PNG 與 SatNet 標籤均由 AFRL SatSim 0.26 原生核心生成，符合國際天文學與太空態勢感知 (SSA) 科研標準。</span>
                 </div>
             </div>
         </section>
     </main>
 
-    <!-- 3D 視覺化與互動核心腳本 -->
-    <script src="/static/js/three.min.js"></script>
-    <script src="/static/js/OrbitControls.js"></script>
+    <!-- 前端核心控制器腳本 -->
     <script src="/static/js/app.js?v={{ version }}"></script>
 </body>
 </html>

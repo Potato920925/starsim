@@ -14,10 +14,11 @@ class SimulationResult:
     raw_flux_frames: List[np.ndarray]            # List of ideal pre-noise electron counts
     stars_projected: List[Dict[str, Any]]        # Stars located on the detector plane
     targets_projected: List[Dict[str, Any]]      # Target RSO trajectories on detector
-    config: StarSimConfig                        # The configuration used
+    config: Any                                  # StarSimConfig or Dict (SatSim native config)
     execution_time_s: float = 0.0                # Total simulation compute time in seconds
     device_info: str = "CPU"                     # Hardware device used (e.g. 'NVIDIA GeForce RTX 3050')
     output_files: List[str] = field(default_factory=list) # Generated FITS/PNG file paths
+    log_output: str = ""                         # SatSim execution stdout/stderr log
 
 
 class BaseSimulationEngine:

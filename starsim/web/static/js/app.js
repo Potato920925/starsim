@@ -1,9 +1,10 @@
 /**
- * StarSim Web Dashboard Frontend Controller
- * - Native SatSim physics engine integration
- * - 3D Earth Globe visualizer with telescope FOV cone frustum and real-time transiting satellite highlights
- * - Optical imagery viewer with Zoom & Pan (mouse wheel + drag)
- * - Clean bounding boxes with hover-based Side Inspector Window
+ * SatSim Native GUI Frontend Controller
+ * Direct interface for Air Force Research Laboratory (AFRL) SatSim 0.26
+ * - Form & Raw SatSim JSON Editor synchronization
+ * - Native SatSim multi-frame execution and log capture
+ * - Astronomical FITS/PNG Optical Viewer with Zoom, Pan & Hover Inspector
+ * - Standard SatNet annotations & CSV export
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -14,8 +15,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentFrameIndex = 0;
     let isPlaying = false;
     let playInterval = null;
-    let liveSatellites = [];
-    let transitingSatellites = [];
+    let activeConfigMode = "form"; // "form" | "json"
+    let cachedTemplates = {};
 
     // Zoom & Pan state
     let zoomScale = 1.0;
@@ -27,37 +28,47 @@ document.addEventListener("DOMContentLoaded", () => {
     let startPanX = 0;
     let startPanY = 0;
 
-    // Inspector & Hover state
+    // Hover Inspector state
     let hoveredObject = null;
     let pinnedObject = null;
 
-    // DOM Elements
+    // Mode Switch Elements
+    const tabBtnForm = document.getElementById("tab-btn-form");
+    const tabBtnJson = document.getElementById("tab-btn-json");
+    const modeFormContainer = document.getElementById("mode-form-container");
+    const modeJsonContainer = document.getElementById("mode-json-container");
+
+    // JSON Editor Elements
+    const jsonTemplateSelect = document.getElementById("json-template-select");
+    const satsimJsonEditor = document.getElementById("satsim-json-editor");
+    const btnSyncFormToJson = document.getElementById("btn-sync-form-to-json");
+    const btnSyncJsonToForm = document.getElementById("btn-sync-json-to-form");
+    const btnExportJson = document.getElementById("btn-export-json");
+    const btnImportJson = document.getElementById("btn-import-json");
+    const jsonFileInput = document.getElementById("json-file-input");
+    const jsonStatusMsg = document.getElementById("json-status-msg");
+
+    // Form Elements
     const sitePresetSelect = document.getElementById("site-preset");
     const siteLatInput = document.getElementById("site-lat");
     const siteLonInput = document.getElementById("site-lon");
     const siteAltInput = document.getElementById("site-alt");
 
-    const trackingCards = document.querySelectorAll(".tracking-card");
-    const coordRadios = document.querySelectorAll("input[name='coord-frame']");
+    const sensorSelect = document.getElementById("sensor-select");
+    const pixelScaleDisplay = document.getElementById("pixel-scale-display");
+
+    const trackingRadios = document.querySelectorAll("input[name='tracking-mode']");
     const radecInputs = document.getElementById("radec-inputs");
     const altazInputs = document.getElementById("altaz-inputs");
 
-    const cloudSlider = document.getElementById("cloud-cover");
-    const cloudVal = document.getElementById("cloud-cover-val");
+    const rsoModeSelect = document.getElementById("rso-mode");
+    const rsoTleSection = document.getElementById("rso-tle-section");
+    const rsoLineSection = document.getElementById("rso-line-section");
+    const tlePresetSelect = document.getElementById("tle-preset-select");
+    const customTle1 = document.getElementById("custom-tle1");
+    const customTle2 = document.getElementById("custom-tle2");
 
-    const sensorSelect = document.getElementById("sensor-select");
-    const btnUploadSensor = document.getElementById("btn-upload-sensor");
-    const sensorFileInput = document.getElementById("sensor-file-input");
-    const btnExportSensor = document.getElementById("btn-export-sensor");
-    const pixelScaleDisplay = document.getElementById("pixel-scale-display");
-
-    const orbitModeSelect = document.getElementById("orbit-mode");
-    const smartOrbitFields = document.getElementById("smart-orbit-fields");
-    const liveSatFields = document.getElementById("live-sat-fields");
-    const liveSatSelect = document.getElementById("live-sat-select");
-    const presetTleFields = document.getElementById("preset-tle-fields");
-    const customTleFields = document.getElementById("custom-tle-fields");
-
+    // Simulation & Status
     const btnRunSim = document.getElementById("btn-run-simulation");
     const loadingOverlay = document.getElementById("loading-spinner");
     const placeholderView = document.getElementById("placeholder-view");
@@ -66,6 +77,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const canvasViewport = document.getElementById("canvas-viewport");
     const canvasTransformContainer = document.getElementById("canvas-transform-container");
     const toggleAnnotations = document.getElementById("toggle-annotations");
+
+    const statusText = document.getElementById("status-text");
+    const statusTime = document.getElementById("status-time");
+    const statusDevice = document.getElementById("status-device");
+    const headerStatusBadge = document.getElementById("header-status-badge");
+    const deviceBadge = document.getElementById("device-badge");
 
     // Zoom controls
     const btnZoomIn = document.getElementById("btn-zoom-in");
@@ -88,12 +105,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const inspectorElectrons = document.getElementById("inspector-electrons");
     const inspectorBbox = document.getElementById("inspector-bbox");
 
-    // Status bar
-    const statusText = document.getElementById("status-text");
-    const statusTime = document.getElementById("status-time");
-    const statusDevice = document.getElementById("status-device");
-    const deviceBadge = document.getElementById("device-badge");
-
     // Player
     const btnPrevFrame = document.getElementById("btn-prev-frame");
     const btnPlayPause = document.getElementById("btn-play-pause");
@@ -101,105 +112,284 @@ document.addEventListener("DOMContentLoaded", () => {
     const frameSlider = document.getElementById("frame-slider");
     const frameIndicator = document.getElementById("frame-indicator");
 
-    // Export buttons
-    const btnDownloadFits = document.getElementById("btn-download-fits");
-    const btnDownloadPng = document.getElementById("btn-download-png");
-    const btnDownloadAnnotatedPng = document.getElementById("btn-download-annotated-png");
-    const btnDownloadCsv = document.getElementById("btn-download-csv");
-    const btnDownloadAll = document.getElementById("btn-download-all");
-
-    // Tabs
-    const viewTabs = document.querySelectorAll(".view-tab");
-    const tabPanels = document.querySelectorAll(".tab-panel");
-
-    // 3D Globe & Tables
-    const transitTableBody = document.getElementById("transit-table-body");
+    // Console & Tables
+    const consoleOutput = document.getElementById("console-output");
+    const btnClearConsole = document.getElementById("btn-clear-console");
     const tableRsoBody = document.getElementById("table-rso-body");
     const tableStarsBody = document.getElementById("table-stars-body");
 
+    // Download links
+    const btnDownloadFits = document.getElementById("btn-download-fits");
+    const btnDownloadPng = document.getElementById("btn-download-png");
+    const btnDownloadSatnet = document.getElementById("btn-download-satnet");
+    const btnDownloadCsv = document.getElementById("btn-download-csv");
+    const btnDownloadAll = document.getElementById("btn-download-all");
+
+    // View tabs
+    const viewTabs = document.querySelectorAll(".view-tab");
+    const tabPanels = document.querySelectorAll(".tab-panel");
+
     // ==========================================
-    // 1. Tab Switching & Initialization
+    // 1. Navigation & Tabs
     // ==========================================
     function switchToTab(tabName) {
-        viewTabs.forEach(t => {
-            if (t.dataset.tab === tabName) {
-                t.classList.add("active");
-            } else {
-                t.classList.remove("active");
-            }
-        });
-        tabPanels.forEach(p => {
-            if (p.id === `tab-${tabName}-panel`) {
-                p.classList.add("active");
-            } else {
-                p.classList.remove("active");
-            }
-        });
-
-        if (tabName === "skydome") {
-            if (!globeInitialized) {
-                initEarthGlobe();
-            } else {
-                resizeGlobeRenderer();
-            }
-            updateGlobeVisuals();
-            fetchLiveSkyMap();
-            fetchTransitingSatellites();
-        } else if (tabName === "image") {
+        viewTabs.forEach(t => t.classList.toggle("active", t.dataset.tab === tabName));
+        tabPanels.forEach(p => p.classList.toggle("active", p.id === `tab-${tabName}-panel`));
+        if (tabName === "image") {
             setTimeout(drawAnnotations, 50);
         }
     }
 
     viewTabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            switchToTab(tab.dataset.tab);
-        });
+        tab.addEventListener("click", () => switchToTab(tab.dataset.tab));
+    });
+
+    // Configuration Mode Switch (Form vs Raw JSON)
+    tabBtnForm.addEventListener("click", () => {
+        activeConfigMode = "form";
+        tabBtnForm.classList.add("active");
+        tabBtnJson.classList.remove("active");
+        modeFormContainer.style.display = "flex";
+        modeJsonContainer.style.display = "none";
+    });
+
+    tabBtnJson.addEventListener("click", () => {
+        activeConfigMode = "json";
+        tabBtnJson.classList.add("active");
+        tabBtnForm.classList.remove("active");
+        modeFormContainer.style.display = "none";
+        modeJsonContainer.style.display = "flex";
+
+        if (!satsimJsonEditor.value.trim()) {
+            syncFormToJson();
+        }
     });
 
     // ==========================================
-    // 2. Tracking Mode & Pointing Inputs
+    // 2. SatSim JSON Editor & Presets
     // ==========================================
-    trackingCards.forEach(card => {
-        card.addEventListener("click", () => {
-            trackingCards.forEach(c => c.classList.remove("active"));
-            card.classList.add("active");
-            const radio = card.querySelector("input[type='radio']");
-            if (radio) radio.checked = true;
-        });
+    function fetchTemplates() {
+        fetch("/api/satsim/templates")
+            .then(r => r.json())
+            .then(data => {
+                cachedTemplates = data;
+                if (cachedTemplates["tle_transit"] && !satsimJsonEditor.value.trim()) {
+                    satsimJsonEditor.value = JSON.stringify(cachedTemplates["tle_transit"].config, null, 2);
+                    validateJsonEditor();
+                }
+            })
+            .catch(console.error);
+    }
+
+    fetchTemplates();
+
+    jsonTemplateSelect.addEventListener("change", (e) => {
+        const key = e.target.value;
+        if (cachedTemplates[key]) {
+            satsimJsonEditor.value = JSON.stringify(cachedTemplates[key].config, null, 2);
+            validateJsonEditor();
+        }
     });
 
-    coordRadios.forEach(radio => {
+    function validateJsonEditor() {
+        try {
+            const parsed = JSON.parse(satsimJsonEditor.value);
+            jsonStatusMsg.textContent = "格式驗證：有效 SatSim 0.26 JSON";
+            jsonStatusMsg.style.color = "var(--success)";
+            return parsed;
+        } catch (err) {
+            jsonStatusMsg.textContent = `語法錯誤: ${err.message}`;
+            jsonStatusMsg.style.color = "var(--danger)";
+            return null;
+        }
+    }
+
+    satsimJsonEditor.addEventListener("input", validateJsonEditor);
+
+    btnSyncFormToJson.addEventListener("click", () => {
+        syncFormToJson();
+    });
+
+    function syncFormToJson() {
+        let config;
+        try {
+            config = buildFullFormConfig();
+        } catch (e) {
+            alert(`表單參數解析異常: ${e}`);
+            return;
+        }
+
+        fetch("/api/satsim/generate_config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(config)
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.satsim_config) {
+                satsimJsonEditor.value = JSON.stringify(res.satsim_config, null, 2);
+                validateJsonEditor();
+            }
+        })
+        .catch(console.error);
+    }
+
+    btnSyncJsonToForm.addEventListener("click", () => {
+        const parsed = validateJsonEditor();
+        if (!parsed) {
+            alert("請先修正 JSON 語法錯誤！");
+            return;
+        }
+
+        // Apply geometry
+        if (parsed.geometry) {
+            const site = parsed.geometry.site || {};
+            if (site.lat != null) siteLatInput.value = site.lat;
+            if (site.lon != null) siteLonInput.value = site.lon;
+            if (site.alt != null) siteAltInput.value = site.alt;
+
+            const t = parsed.geometry.time;
+            if (Array.isArray(t) && t.length >= 6) {
+                const pad = (n) => String(Math.floor(n)).padStart(2, "0");
+                document.getElementById("start-time").value = `${t[0]}-${pad(t[1])}-${pad(t[2])}T${pad(t[3])}:${pad(t[4])}:${pad(t[5])}Z`;
+            }
+
+            const track = site.track || {};
+            if (track.mode === "fixed") {
+                document.querySelector("input[name='tracking-mode'][value='stare']").checked = true;
+                radecInputs.style.display = "none";
+                altazInputs.style.display = "flex";
+                if (track.az != null) document.getElementById("point-az").value = track.az;
+                if (track.el != null) document.getElementById("point-alt").value = track.el;
+            } else {
+                document.querySelector("input[name='tracking-mode'][value='sidereal']").checked = true;
+                radecInputs.style.display = "flex";
+                altazInputs.style.display = "none";
+                if (track.ra != null) document.getElementById("point-ra").value = track.ra;
+                if (track.dec != null) document.getElementById("point-dec").value = track.dec;
+            }
+
+            const obsList = (parsed.geometry.obs && parsed.geometry.obs.list) ? parsed.geometry.obs.list : [];
+            if (obsList.length > 0) {
+                const target = obsList[0];
+                if (target.mode === "tle") {
+                    rsoModeSelect.value = "tle";
+                    rsoTleSection.style.display = "block";
+                    rsoLineSection.style.display = "none";
+                    if (target.tle1) customTle1.value = target.tle1;
+                    if (target.tle2) customTle2.value = target.tle2;
+                } else if (target.mode === "line") {
+                    rsoModeSelect.value = "line";
+                    rsoTleSection.style.display = "none";
+                    rsoLineSection.style.display = "block";
+                    if (target.origin) {
+                        document.getElementById("line-origin-x").value = target.origin[0];
+                        document.getElementById("line-origin-y").value = target.origin[1];
+                    }
+                    if (target.velocity) {
+                        document.getElementById("line-vel-x").value = target.velocity[0];
+                        document.getElementById("line-vel-y").value = target.velocity[1];
+                    }
+                }
+                if (target.mv != null) document.getElementById("target-vmag").value = target.mv;
+            }
+        }
+
+        // Apply FPA
+        if (parsed.fpa) {
+            const fpa = parsed.fpa;
+            if (fpa.width) document.getElementById("sensor-width").value = fpa.width;
+            if (fpa.height) document.getElementById("sensor-height").value = fpa.height;
+            if (fpa.time && fpa.time.exposure) document.getElementById("exposure-time").value = fpa.time.exposure;
+            if (fpa.num_frames) document.getElementById("frame-count").value = fpa.num_frames;
+            if (fpa.dark_current != null) document.getElementById("sensor-dark-curr").value = fpa.dark_current;
+            if (fpa.bias != null) document.getElementById("sensor-bias").value = fpa.bias;
+            if (fpa.noise && fpa.noise.read != null) document.getElementById("sensor-read-noise").value = fpa.noise.read;
+        }
+
+        alert("✅ 已成功從 SatSim JSON 設定檔同步至表單參數！");
+    });
+
+    btnExportJson.addEventListener("click", () => {
+        const content = satsimJsonEditor.value;
+        const blob = new Blob([content], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "satsim_config.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    btnImportJson.addEventListener("click", () => jsonFileInput.click());
+
+    jsonFileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            satsimJsonEditor.value = evt.target.result;
+            validateJsonEditor();
+        };
+        reader.readAsText(file);
+    });
+
+    // ==========================================
+    // 3. Form Controls & Sensor Profiles
+    // ==========================================
+    trackingRadios.forEach(radio => {
         radio.addEventListener("change", (e) => {
-            if (e.target.value === "radec") {
+            if (e.target.value === "sidereal") {
                 radecInputs.style.display = "flex";
                 altazInputs.style.display = "none";
             } else {
                 radecInputs.style.display = "none";
                 altazInputs.style.display = "flex";
             }
-            updateGlobeVisuals();
         });
     });
 
-    ["point-ra", "point-dec", "point-az", "point-alt"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener("input", () => {
-                updateGlobeVisuals();
-            });
+    rsoModeSelect.addEventListener("change", (e) => {
+        if (e.target.value === "tle") {
+            rsoTleSection.style.display = "block";
+            rsoLineSection.style.display = "none";
+        } else {
+            rsoTleSection.style.display = "none";
+            rsoLineSection.style.display = "block";
         }
     });
 
-    cloudSlider.addEventListener("input", (e) => {
-        cloudVal.textContent = `${e.target.value}%`;
+    const PRESET_TLES = {
+        starlink: {
+            line1: "1 44713U 19074A   26292.83333333  .00001234  00000-0  56789-4 0  9991",
+            line2: "2 44713  53.0543 280.1234 0001234  75.4321 284.6789 15.06412345 12345"
+        },
+        iss: {
+            line1: "1 25544U 98067A   26292.85501157  .00016717  00000-0  10270-3 0  9993",
+            line2: "2 25544  51.6416 112.5123 0005432 290.1234 165.4321 15.4987654312345"
+        },
+        hubble: {
+            line1: "1 20580U 90037B   26292.74830116  .00001234  00000-0  45678-4 0  9992",
+            line2: "2 20580  28.4698  55.1234 0002874  85.4321 274.6789 15.0934567812345"
+        },
+        tiangong: {
+            line1: "1 48274U 21035A   26292.81234567  .00021345  00000-0  14567-3 0  9994",
+            line2: "2 48274  41.4723  98.1234 0003456 220.1234 140.4321 15.6123456712345"
+        }
+    };
+
+    tlePresetSelect.addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (PRESET_TLES[val]) {
+            customTle1.value = PRESET_TLES[val].line1;
+            customTle2.value = PRESET_TLES[val].line2;
+        }
     });
 
     // Site Presets
     fetch("/api/sites")
         .then(r => r.json())
-        .then(data => {
-            sitesDatabase = data;
-        })
+        .then(data => { sitesDatabase = data; })
         .catch(console.error);
 
     sitePresetSelect.addEventListener("change", (e) => {
@@ -209,45 +399,10 @@ document.addEventListener("DOMContentLoaded", () => {
             siteLatInput.value = s.lat_deg.toFixed(4);
             siteLonInput.value = s.lon_deg.toFixed(4);
             siteAltInput.value = Math.round(s.alt_m);
-            updateGlobeVisuals();
-            fetchLiveSkyMap();
-            fetchTransitingSatellites();
         }
     });
 
-    [siteLatInput, siteLonInput, siteAltInput].forEach(inp => {
-        if (inp) {
-            inp.addEventListener("change", () => {
-                updateGlobeVisuals();
-                fetchLiveSkyMap();
-                fetchTransitingSatellites();
-            });
-        }
-    });
-
-    // ==========================================
-    // 3. Sensor Profile Manager
-    // ==========================================
-    function updateSensorUI(profile) {
-        currentSensorProfile = profile;
-        document.getElementById("sensor-aperture").value = profile.optical.aperture_m;
-        document.getElementById("sensor-focal-len").value = profile.optical.focal_length_m;
-        document.getElementById("sensor-width").value = profile.detector.width_px;
-        document.getElementById("sensor-height").value = profile.detector.height_px;
-        document.getElementById("sensor-pix-size").value = profile.detector.pixel_size_um;
-        document.getElementById("sensor-qe").value = profile.detector.quantum_efficiency;
-        document.getElementById("sensor-read-noise").value = profile.noise.read_noise_e;
-        document.getElementById("sensor-dark-curr").value = profile.noise.dark_current_eps;
-        document.getElementById("sensor-gain").value = profile.noise.gain_e_per_adu;
-        document.getElementById("sensor-bias").value = profile.noise.bias_adu;
-
-        const pixScale = 206265.0 * (profile.detector.pixel_size_um * 1e-6) / profile.optical.focal_length_m;
-        const fovW = (profile.detector.width_px * pixScale) / 3600.0;
-        const fovH = (profile.detector.height_px * pixScale) / 3600.0;
-        pixelScaleDisplay.textContent = `角解析力: ${pixScale.toFixed(2)}" / 視場: ${fovW.toFixed(2)}°x${fovH.toFixed(2)}°`;
-        updateGlobeVisuals();
-    }
-
+    // Sensor Profiles
     function fetchSensors(selectId = null) {
         fetch("/api/sensors")
             .then(r => r.json())
@@ -272,665 +427,230 @@ document.addEventListener("DOMContentLoaded", () => {
     function loadSensorDetails(sensorId) {
         fetch(`/api/sensor/${sensorId}`)
             .then(r => r.json())
-            .then(profile => updateSensorUI(profile))
+            .then(profile => {
+                currentSensorProfile = profile;
+                document.getElementById("sensor-aperture").value = profile.optical.aperture_m;
+                document.getElementById("sensor-focal-len").value = profile.optical.focal_length_m;
+                document.getElementById("sensor-width").value = profile.detector.width_px;
+                document.getElementById("sensor-height").value = profile.detector.height_px;
+                document.getElementById("sensor-pix-size").value = profile.detector.pixel_size_um;
+                document.getElementById("sensor-read-noise").value = profile.noise.read_noise_e;
+                document.getElementById("sensor-dark-curr").value = profile.noise.dark_current_eps;
+                document.getElementById("sensor-bias").value = profile.noise.bias_adu;
+
+                const pixScale = 206265.0 * (profile.detector.pixel_size_um * 1e-6) / profile.optical.focal_length_m;
+                const fovW = (profile.detector.width_px * pixScale) / 3600.0;
+                const fovH = (profile.detector.height_px * pixScale) / 3600.0;
+                pixelScaleDisplay.textContent = `角解析力: ${pixScale.toFixed(2)}" / 視場: ${fovW.toFixed(2)}°x${fovH.toFixed(2)}°`;
+            })
             .catch(console.error);
     }
 
     sensorSelect.addEventListener("change", (e) => loadSensorDetails(e.target.value));
-    btnUploadSensor.addEventListener("click", () => sensorFileInput.click());
+    fetchSensors("sony_imx455");
 
-    sensorFileInput.addEventListener("change", (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append("file", file);
+    function buildFullFormConfig() {
+        const trackingMode = document.querySelector("input[name='tracking-mode']:checked").value;
+        const isSidereal = trackingMode === "sidereal";
 
-        fetch("/api/sensor/upload", { method: "POST", body: formData })
-            .then(r => r.json())
-            .then(res => {
-                if (res.error) {
-                    alert(`匯入感測器失敗: ${res.error}`);
-                } else {
-                    alert(res.message);
-                    fetchSensors(res.profile.sensor_id);
-                }
-            })
-            .catch(err => alert(`匯入異常: ${err}`));
-    });
+        const ap = parseFloat(document.getElementById("sensor-aperture").value) || 0.5;
+        const fl = parseFloat(document.getElementById("sensor-focal-len").value) || 2.0;
+        const wPx = parseInt(document.getElementById("sensor-width").value) || 1024;
+        const hPx = parseInt(document.getElementById("sensor-height").value) || 1024;
+        const pixUm = parseFloat(document.getElementById("sensor-pix-size").value) || 3.76;
+        const expTime = parseFloat(document.getElementById("exposure-time").value) || 2.0;
+        const frames = parseInt(document.getElementById("frame-count").value) || 1;
 
-    btnExportSensor.addEventListener("click", () => {
-        if (!currentSensorProfile) return;
-        const profileToSave = buildCurrentSensorProfile();
-        const blob = new Blob([JSON.stringify(profileToSave, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${profileToSave.sensor_id}_custom.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-    });
+        let targets = [];
+        const rsoMode = rsoModeSelect.value;
+        const vmag = parseFloat(document.getElementById("target-vmag").value) || 7.5;
 
-    function buildCurrentSensorProfile() {
-        const base = currentSensorProfile || { sensor_id: "custom", name: "Custom Sensor", manufacturer: "Custom" };
+        if (rsoMode === "tle") {
+            targets.push({
+                name: "SatSim_TLE_Target",
+                mode: "tle",
+                tle1: customTle1.value.trim(),
+                tle2: customTle2.value.trim(),
+                visual_magnitude: vmag
+            });
+        } else {
+            const ox = parseFloat(document.getElementById("line-origin-x").value) || 0.2;
+            const oy = parseFloat(document.getElementById("line-origin-y").value) || 0.3;
+            const vx = parseFloat(document.getElementById("line-vel-x").value) || 18.0;
+            const vy = parseFloat(document.getElementById("line-vel-y").value) || 7.0;
+            targets.push({
+                name: "SatSim_Linear_RSO",
+                mode: "line",
+                origin: [ox, oy],
+                velocity: [vx, vy],
+                visual_magnitude: vmag
+            });
+        }
+
+        const t0 = new Date(document.getElementById("start-time").value || "2026-10-19T20:00:00Z");
+        const t1 = new Date(t0.getTime() + (expTime + 0.5) * frames * 1000);
+
         return {
-            sensor_id: base.sensor_id,
-            name: base.name,
-            manufacturer: base.manufacturer,
-            description: base.description || "",
-            optical: {
-                aperture_m: parseFloat(document.getElementById("sensor-aperture").value) || 0.5,
-                focal_length_m: parseFloat(document.getElementById("sensor-focal-len").value) || 2.0,
-                filter_band: base.optical ? base.optical.filter_band : "V",
-                central_wavelength_nm: 550.0,
-                bandwidth_nm: 100.0
+            site: {
+                name: "SatSim Observation Site",
+                lat_deg: parseFloat(siteLatInput.value) || 23.4694,
+                lon_deg: parseFloat(siteLonInput.value) || 120.8726,
+                alt_m: parseFloat(siteAltInput.value) || 2862.0
             },
-            detector: {
-                width_px: parseInt(document.getElementById("sensor-width").value) || 1024,
-                height_px: parseInt(document.getElementById("sensor-height").value) || 1024,
-                pixel_size_um: parseFloat(document.getElementById("sensor-pix-size").value) || 3.76,
-                bit_depth: 16,
-                full_well_capacity_e: 50000.0,
-                quantum_efficiency: parseFloat(document.getElementById("sensor-qe").value) || 0.8
+            pointing: {
+                coord_frame: isSidereal ? "radec" : "altaz",
+                ra_deg: parseFloat(document.getElementById("point-ra").value) || 88.79,
+                dec_deg: parseFloat(document.getElementById("point-dec").value) || 7.41,
+                az_deg: parseFloat(document.getElementById("point-az").value) || 180.0,
+                alt_deg: parseFloat(document.getElementById("point-alt").value) || 75.0,
+                roll_deg: 0.0,
+                tracking_mode: trackingMode
             },
-            noise: {
-                read_noise_e: parseFloat(document.getElementById("sensor-read-noise").value) || 2.0,
-                dark_current_eps: parseFloat(document.getElementById("sensor-dark-curr").value) || 0.005,
-                operating_temp_c: -10.0,
-                gain_e_per_adu: parseFloat(document.getElementById("sensor-gain").value) || 1.0,
-                bias_adu: parseFloat(document.getElementById("sensor-bias").value) || 100.0,
-                prnu_percent: 0.5,
-                hot_pixel_rate: 0.0001
-            }
+            atmosphere: {
+                seeing_fwhm_arcsec: 1.5,
+                extinction_kv: 0.15,
+                bortle_class: parseInt(document.getElementById("bortle-class").value) || 2
+            },
+            sensor: {
+                sensor_id: "satsim_sensor",
+                name: "SatSim Sensor",
+                optical: { aperture_m: ap, focal_length_m: fl, central_wavelength_nm: 550.0, bandwidth_nm: 100.0 },
+                detector: { width_px: wPx, height_px: hPx, pixel_size_um: pixUm, bit_depth: 16, quantum_efficiency: 0.85, full_well_capacity_e: 50000.0 },
+                noise: {
+                    read_noise_e: parseFloat(document.getElementById("sensor-read-noise").value) || 2.0,
+                    dark_current_eps: parseFloat(document.getElementById("sensor-dark-curr").value) || 0.005,
+                    gain_e_per_adu: 1.0,
+                    bias_adu: parseFloat(document.getElementById("sensor-bias").value) || 100.0
+                }
+            },
+            targets: targets,
+            start_time_iso: t0.toISOString(),
+            end_time_iso: t1.toISOString(),
+            exposure_time_s: expTime,
+            readout_time_s: 0.5,
+            engine: "satsim",
+            use_gpu: document.getElementById("use-gpu-check").checked
         };
     }
 
     // ==========================================
-    // 4. Orbit Target & Real-Time Tracking
+    // 4. Run SatSim Native Simulation
     // ==========================================
-    orbitModeSelect.addEventListener("change", (e) => {
-        const val = e.target.value;
-        smartOrbitFields.style.display = val === "smart_transit" ? "block" : "none";
-        liveSatFields.style.display = val === "live_sat" ? "block" : "none";
-        presetTleFields.style.display = val === "preset_tle" ? "block" : "none";
-        customTleFields.style.display = val === "custom_tle" ? "block" : "none";
+    btnRunSim.addEventListener("click", () => {
+        let payload = {};
 
-        if (val === "live_sat") {
-            fetchLiveSkyMap();
-        }
-    });
-
-    function fetchLiveSkyMap() {
-        const lat = siteLatInput ? siteLatInput.value : 23.4694;
-        const lon = siteLonInput ? siteLonInput.value : 120.8726;
-        const alt = siteAltInput ? siteAltInput.value : 2862;
-        const timeInput = document.getElementById("start-time");
-        const time = timeInput ? timeInput.value : "2026-10-19T20:00:00Z";
-
-        fetch(`/api/rso/sky_map?lat=${lat}&lon=${lon}&alt=${alt}&time=${encodeURIComponent(time)}&group=visual`)
-            .then(r => r.json())
-            .then(data => {
-                liveSatellites = data.satellites || [];
-                if (liveSatSelect) {
-                    liveSatSelect.innerHTML = "";
-                    liveSatellites.forEach(s => {
-                        const opt = document.createElement("option");
-                        opt.value = s.norad_id;
-                        opt.textContent = `${s.name} (Az:${s.az_deg}°, Alt:${s.alt_deg}°, V:${s.vmag})`;
-                        opt.dataset.tle1 = s.tle1;
-                        opt.dataset.tle2 = s.tle2;
-                        opt.dataset.vmag = s.vmag;
-                        opt.dataset.name = s.name;
-                        liveSatSelect.appendChild(opt);
-                    });
-                }
-                updateGlobeSatellites();
-            })
-            .catch(err => {
-                console.warn("fetchLiveSkyMap error:", err);
-            });
-    }
-
-    function fetchTransitingSatellites() {
-        const lat = siteLatInput ? siteLatInput.value : 23.4694;
-        const lon = siteLonInput ? siteLonInput.value : 120.8726;
-        const alt = siteAltInput ? siteAltInput.value : 2862;
-        const ra = document.getElementById("point-ra") ? document.getElementById("point-ra").value : 88.79;
-        const dec = document.getElementById("point-dec") ? document.getElementById("point-dec").value : 7.41;
-        const t0Input = document.getElementById("start-time");
-        const t0 = t0Input ? t0Input.value : "2026-10-19T20:00:00Z";
-        let dateObj = new Date(t0);
-        if (isNaN(dateObj.getTime())) {
-            dateObj = new Date();
-        }
-        const expTime = parseFloat(document.getElementById("exposure-time")?.value) || 2.0;
-        const frames = parseInt(document.getElementById("frame-count")?.value) || 1;
-        const totalDuration = (expTime + 0.5) * frames;
-        const t1 = new Date(dateObj.getTime() + totalDuration * 1000).toISOString();
-
-        const prof = buildCurrentSensorProfile();
-        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
-        const fovW = (prof.detector.width_px * pixScale) / 3600.0;
-        const fovH = (prof.detector.height_px * pixScale) / 3600.0;
-
-        const coordFrame = document.querySelector("input[name='coord-frame']:checked") ? document.querySelector("input[name='coord-frame']:checked").value : "radec";
-        const az = document.getElementById("point-az") ? document.getElementById("point-az").value : 180;
-        const altPt = document.getElementById("point-alt") ? document.getElementById("point-alt").value : 65;
-
-        fetch(`/api/rso/transits?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&coord_frame=${coordFrame}&az=${az}&alt_pt=${altPt}&fov_w=${fovW}&fov_h=${fovH}&start_time=${encodeURIComponent(t0)}&end_time=${encodeURIComponent(t1)}&group=visual`)
-            .then(r => r.json())
-            .then(data => {
-                transitingSatellites = data.transits || [];
-                renderTransitTable(transitingSatellites);
-                updateGlobeSatellites();
-            })
-            .catch(err => {
-                console.warn("fetchTransitingSatellites error:", err);
-            });
-    }
-
-    function renderTransitTable(transits) {
-        transitTableBody.innerHTML = "";
-        if (transits.length === 0) {
-            transitTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">此時段天區無過境衛星（可點擊上方「🎯 一鍵瞄準最近過境衛星」或在 3D 地球儀上選取目標）</td></tr>`;
-            return;
-        }
-
-        transits.slice(0, 15).forEach(t => {
-            const tr = document.createElement("tr");
-            const statusBadge = t.is_in_fov
-                ? `<span style="color:#10b981; font-weight:bold;">⚡ 穿透視場中 (0.0°)</span>`
-                : `<span style="color:#f59e0b;">角距 ${t.min_separation_deg}°</span>`;
-
-            tr.innerHTML = `
-                <td><strong>${t.name}</strong></td>
-                <td>${t.transit_time_iso ? t.transit_time_iso.split('T')[1].replace('Z','') : '--'}</td>
-                <td>${statusBadge}</td>
-                <td>V=${t.vmag}</td>
-                <td>${t.speed_deg_s}°/s</td>
-                <td>
-                    <button type="button" class="btn btn-primary btn-sm btn-align-transit"
-                        data-tle1="${t.tle1}" data-tle2="${t.tle2}" data-name="${t.name}" data-vmag="${t.vmag}"
-                        data-ra="${t.target_ra_deg}" data-dec="${t.target_dec_deg}"
-                        data-az="${t.target_az_deg}" data-alt="${t.target_alt_deg}">
-                        ${t.is_in_fov ? '設為目標' : '🎯 對齊並設為目標'}
-                    </button>
-                </td>
-            `;
-            transitTableBody.appendChild(tr);
-        });
-
-        document.querySelectorAll(".btn-align-transit").forEach(btn => {
-            btn.addEventListener("click", (e) => {
-                const b = e.target;
-                if (b.dataset.az && b.dataset.alt) {
-                    document.getElementById("point-az").value = b.dataset.az;
-                    document.getElementById("point-alt").value = b.dataset.alt;
-                }
-                if (b.dataset.ra && b.dataset.dec) {
-                    document.getElementById("point-ra").value = b.dataset.ra;
-                    document.getElementById("point-dec").value = b.dataset.dec;
-                }
-
-                orbitModeSelect.value = "custom_tle";
-                smartOrbitFields.style.display = "none";
-                liveSatFields.style.display = "none";
-                presetTleFields.style.display = "none";
-                customTleFields.style.display = "block";
-
-                document.getElementById("custom-tle1").value = b.dataset.tle1;
-                document.getElementById("custom-tle2").value = b.dataset.tle2;
-                document.getElementById("target-vmag").value = b.dataset.vmag;
-
-                updateGlobeVisuals();
-                fetchTransitingSatellites();
-                alert(`🎯 望遠鏡已成功對準「${b.dataset.name}」過境軌道！\n現在點擊「開始光學影像模擬」即可在畫面中央觀測到該衛星！`);
-            });
-        });
-    }
-
-    // Auto-point to nearest overhead satellite
-    const btnPointNearest = document.getElementById("btn-point-nearest-rso");
-    if (btnPointNearest) {
-        btnPointNearest.addEventListener("click", () => {
-            btnPointNearest.textContent = "⏳ 搜尋瞄準中...";
-            const lat = siteLatInput.value;
-            const lon = siteLonInput.value;
-            const alt = siteAltInput.value;
-            const ra = document.getElementById("point-ra").value;
-            const dec = document.getElementById("point-dec").value;
-            const time = document.getElementById("start-time").value;
-
-            fetch(`/api/rso/nearest?lat=${lat}&lon=${lon}&alt=${alt}&ra=${ra}&dec=${dec}&time=${encodeURIComponent(time)}&group=visual`)
-                .then(r => r.json())
-                .then(res => {
-                    btnPointNearest.textContent = "🎯 一鍵瞄準最近過境衛星";
-                    if (res.satellite) {
-                        const s = res.satellite;
-                        document.getElementById("point-az").value = s.az_deg;
-                        document.getElementById("point-alt").value = s.alt_deg;
-                        document.getElementById("point-ra").value = s.ra_deg;
-                        document.getElementById("point-dec").value = s.dec_deg;
-
-                        orbitModeSelect.value = "custom_tle";
-                        smartOrbitFields.style.display = "none";
-                        liveSatFields.style.display = "none";
-                        presetTleFields.style.display = "none";
-                        customTleFields.style.display = "block";
-
-                        document.getElementById("custom-tle1").value = s.tle1;
-                        document.getElementById("custom-tle2").value = s.tle2;
-                        document.getElementById("target-vmag").value = s.vmag;
-
-                        updateGlobeVisuals();
-                        fetchTransitingSatellites();
-                        alert(`🎯 望遠鏡已自動對準頭頂上空的「${s.name}」(仰角 ${s.alt_deg}°, 方位 ${s.az_deg}°)，並設定為模擬目標！\n點擊「開始光學影像模擬」即可直接看見！`);
-                    } else {
-                        alert("當前時刻天空中暫無高仰角衛星，建議點選地球儀自選指向或使用「智慧視場穿透生成」！");
-                    }
-                })
-                .catch(err => {
-                    btnPointNearest.textContent = "🎯 一鍵瞄準最近過境衛星";
-                    alert(`瞄準失敗: ${err}`);
-                });
-        });
-    }
-
-    // ==========================================
-    // 5. 3D Earth Globe Visualizer (Three.js)
-    // ==========================================
-    let globeScene, globeCamera, globeRenderer, globeControls;
-    let earthMesh, siteMarkerGroup, fovFrustumGroup, satMarkersGroup;
-    let isGlobeRotating = false;
-    let globeInitialized = false;
-    const EARTH_RADIUS = 100.0;
-
-    function initEarthGlobe() {
-        const container = document.getElementById("earth-globe-container");
-        if (!container || globeInitialized) return;
-
-        const w = container.clientWidth || 600;
-        const h = container.clientHeight || 450;
-
-        globeScene = new THREE.Scene();
-        globeScene.background = new THREE.Color(0x02040a);
-
-        globeCamera = new THREE.PerspectiveCamera(45, w / h, 1, 3000);
-        globeCamera.position.set(0, 160, 280);
-
-        globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        globeRenderer.setSize(w, h);
-        globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        container.innerHTML = "";
-        container.appendChild(globeRenderer.domElement);
-
-        if (THREE.OrbitControls) {
-            globeControls = new THREE.OrbitControls(globeCamera, globeRenderer.domElement);
-            globeControls.enableDamping = true;
-            globeControls.dampingFactor = 0.05;
-            globeControls.minDistance = 115;
-            globeControls.maxDistance = 800;
-            globeControls.autoRotate = false;
-            globeControls.autoRotateSpeed = 0.6;
-        }
-
-        // Ambient Light
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        globeScene.add(ambientLight);
-
-        // Directional Sun Light
-        const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        sunLight.position.set(300, 200, 200);
-        globeScene.add(sunLight);
-
-        // Earth Mesh with Texture
-        const sphereGeo = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
-        const textureLoader = new THREE.TextureLoader();
-        textureLoader.load(
-            "/static/textures/earth.jpg",
-            (texture) => {
-                const earthMat = new THREE.MeshStandardMaterial({
-                    map: texture,
-                    roughness: 0.85,
-                    metalness: 0.1
-                });
-                earthMesh = new THREE.Mesh(sphereGeo, earthMat);
-                globeScene.add(earthMesh);
-            },
-            undefined,
-            () => {
-                // Fallback procedural Earth if texture fails
-                const earthMat = new THREE.MeshStandardMaterial({
-                    color: 0x1d4ed8,
-                    wireframe: false,
-                    roughness: 0.8
-                });
-                earthMesh = new THREE.Mesh(sphereGeo, earthMat);
-                globeScene.add(earthMesh);
+        if (activeConfigMode === "json") {
+            const parsed = validateJsonEditor();
+            if (!parsed) {
+                alert("❌ SatSim JSON 存在語法錯誤，請檢查修正後再執行！");
+                return;
             }
-        );
-
-        // Subtle Atmosphere glow sphere
-        const atmoGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.015, 64, 64);
-        const atmoMat = new THREE.MeshBasicMaterial({
-            color: 0x38bdf8,
-            transparent: true,
-            opacity: 0.12,
-            side: THREE.BackSide
-        });
-        const atmoMesh = new THREE.Mesh(atmoGeo, atmoMat);
-        globeScene.add(atmoMesh);
-
-        // Groups for dynamic elements
-        siteMarkerGroup = new THREE.Group();
-        fovFrustumGroup = new THREE.Group();
-        satMarkersGroup = new THREE.Group();
-        globeScene.add(siteMarkerGroup);
-        globeScene.add(fovFrustumGroup);
-        globeScene.add(satMarkersGroup);
-
-        // Toolbar Buttons
-        const btnFocusSite = document.getElementById("btn-globe-focus-site");
-        if (btnFocusSite) {
-            btnFocusSite.addEventListener("click", focusGlobeOnSite);
-        }
-
-        const btnFocusSat = document.getElementById("btn-globe-focus-sat");
-        if (btnFocusSat) {
-            btnFocusSat.addEventListener("click", focusGlobeOnTransitingSat);
-        }
-
-        const btnToggleRotate = document.getElementById("btn-globe-toggle-rotate");
-        if (btnToggleRotate) {
-            btnToggleRotate.addEventListener("click", () => {
-                isGlobeRotating = !isGlobeRotating;
-                if (globeControls) globeControls.autoRotate = isGlobeRotating;
-                btnToggleRotate.classList.toggle("active", isGlobeRotating);
-            });
-        }
-
-        const btnGlobeReset = document.getElementById("btn-globe-reset");
-        if (btnGlobeReset) {
-            btnGlobeReset.addEventListener("click", () => {
-                if (globeControls) {
-                    globeControls.reset();
-                    globeControls.target.set(0, 0, 0);
-                }
-                globeCamera.position.set(0, 160, 280);
-            });
-        }
-
-        // Raycasting for clicking satellites in 3D
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
-
-        container.addEventListener("dblclick", (e) => {
-            const rect = container.getBoundingClientRect();
-            mouse.x = ((e.clientX - rect.left) / container.clientWidth) * 2 - 1;
-            mouse.y = -((e.clientY - rect.top) / container.clientHeight) * 2 + 1;
-
-            raycaster.setFromCamera(mouse, globeCamera);
-            const intersects = raycaster.intersectObjects(satMarkersGroup.children, true);
-            if (intersects.length > 0) {
-                const hitMesh = intersects[0].object;
-                if (hitMesh.userData && hitMesh.userData.satellite) {
-                    const sat = hitMesh.userData.satellite;
-                    document.getElementById("point-az").value = sat.az_deg;
-                    document.getElementById("point-alt").value = sat.alt_deg;
-                    document.getElementById("point-ra").value = sat.ra_deg;
-                    document.getElementById("point-dec").value = sat.dec_deg;
-
-                    orbitModeSelect.value = "custom_tle";
-                    smartOrbitFields.style.display = "none";
-                    liveSatFields.style.display = "none";
-                    presetTleFields.style.display = "none";
-                    customTleFields.style.display = "block";
-
-                    document.getElementById("custom-tle1").value = sat.tle1;
-                    document.getElementById("custom-tle2").value = sat.tle2;
-                    document.getElementById("target-vmag").value = sat.vmag;
-
-                    updateGlobeVisuals();
-                    fetchTransitingSatellites();
-                    alert(`🎯 望遠鏡已鎖定衛星「${sat.name}」！\n(方位: ${sat.az_deg}°, 仰角: ${sat.alt_deg}°)\n現在點擊「開始光學影像模擬」即可看見！`);
-                }
-            }
-        });
-
-        globeInitialized = true;
-        animateGlobe();
-        updateGlobeVisuals();
-    }
-
-    function resizeGlobeRenderer() {
-        const container = document.getElementById("earth-globe-container");
-        if (!container || !globeRenderer || !globeCamera) return;
-        const w = container.clientWidth || 600;
-        const h = container.clientHeight || 450;
-        globeCamera.aspect = w / h;
-        globeCamera.updateProjectionMatrix();
-        globeRenderer.setSize(w, h);
-    }
-
-    window.addEventListener("resize", () => {
-        resizeGlobeRenderer();
-    });
-
-    function animateGlobe() {
-        requestAnimationFrame(animateGlobe);
-        if (globeControls) globeControls.update();
-        if (globeRenderer && globeScene && globeCamera) {
-            globeRenderer.render(globeScene, globeCamera);
-        }
-    }
-
-    // Convert (lat, lon) in degrees to 3D Cartesian on sphere
-    function latLonToVector3(latDeg, lonDeg, radius = EARTH_RADIUS) {
-        const phi = (90 - latDeg) * (Math.PI / 180);
-        const theta = (lonDeg + 180) * (Math.PI / 180);
-        const x = -(radius * Math.sin(phi) * Math.cos(theta));
-        const z = radius * Math.sin(phi) * Math.sin(theta);
-        const y = radius * Math.cos(phi);
-        return new THREE.Vector3(x, y, z);
-    }
-
-    // Compute topocentric local tangent coordinate frame (Up, North, East) at site
-    function getSiteFrame(latDeg, lonDeg) {
-        const sitePos = latLonToVector3(latDeg, lonDeg, EARTH_RADIUS);
-        const u = sitePos.clone().normalize(); // Up
-
-        const northPole = new THREE.Vector3(0, 1, 0);
-        const northProj = northPole.clone().sub(u.clone().multiplyScalar(northPole.dot(u)));
-        const n = northProj.normalize(); // North tangent
-
-        const e = n.clone().cross(u).normalize(); // East tangent
-        return { sitePos, u, n, e };
-    }
-
-    // Compute pointing vector in 3D world space
-    function getTelescopePointingVector(latDeg, lonDeg, azDeg, altDeg) {
-        const { sitePos, u, n, e } = getSiteFrame(latDeg, lonDeg);
-        const azRad = azDeg * (Math.PI / 180);
-        const altRad = altDeg * (Math.PI / 180);
-
-        // Horizontal direction
-        const h = n.clone().multiplyScalar(Math.cos(azRad)).add(e.clone().multiplyScalar(Math.sin(azRad))).normalize();
-        // Combined with altitude
-        const dir = h.clone().multiplyScalar(Math.cos(altRad)).add(u.clone().multiplyScalar(Math.sin(altRad))).normalize();
-        return { sitePos, dir, u };
-    }
-
-    function updateGlobeVisuals() {
-        if (!globeInitialized) return;
-
-        const lat = parseFloat(siteLatInput?.value) || 23.4694;
-        const lon = parseFloat(siteLonInput?.value) || 120.8726;
-        const az = parseFloat(document.getElementById("point-az")?.value) || 180.0;
-        const alt = parseFloat(document.getElementById("point-alt")?.value) || 65.0;
-
-        // 1. Draw Observation Site Pin
-        siteMarkerGroup.clear();
-        const { sitePos, dir, u } = getTelescopePointingVector(lat, lon, az, alt);
-
-        // Amber Site Sphere
-        const pinGeo = new THREE.SphereGeometry(1.8, 16, 16);
-        const pinMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
-        const pinMesh = new THREE.Mesh(pinGeo, pinMat);
-        pinMesh.position.copy(sitePos.clone().multiplyScalar(1.008));
-        siteMarkerGroup.add(pinMesh);
-
-        // Site Ring
-        const ringGeo = new THREE.RingGeometry(2.5, 3.2, 32);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
-        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-        ringMesh.position.copy(sitePos.clone().multiplyScalar(1.002));
-        ringMesh.lookAt(sitePos.clone().multiplyScalar(2));
-        siteMarkerGroup.add(ringMesh);
-
-        // 2. Draw Telescope FOV Cone Frustum
-        fovFrustumGroup.clear();
-        const prof = buildCurrentSensorProfile();
-        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
-        const fovW = (prof.detector.width_px * pixScale) / 3600.0;
-        const fovH = (prof.detector.height_px * pixScale) / 3600.0;
-        const fovRadiusDeg = Math.max(Math.hypot(fovW, fovH) / 2.0, 1.5);
-        const coneLength = 75.0;
-        const baseRadius = coneLength * Math.tan(fovRadiusDeg * (Math.PI / 180) * 1.5);
-
-        // Center line
-        const endPoint = sitePos.clone().add(dir.clone().multiplyScalar(coneLength));
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([sitePos, endPoint]);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, linewidth: 2 });
-        fovFrustumGroup.add(new THREE.Line(lineGeo, lineMat));
-
-        // Conical Frustum Mesh
-        const coneGeo = new THREE.ConeGeometry(baseRadius, coneLength, 32, 1, true);
-        coneGeo.translate(0, -coneLength / 2, 0);
-        coneGeo.rotateX(Math.PI / 2);
-
-        const coneMat = new THREE.MeshBasicMaterial({
-            color: 0x38bdf8,
-            transparent: true,
-            opacity: 0.22,
-            side: THREE.DoubleSide
-        });
-        const coneMesh = new THREE.Mesh(coneGeo, coneMat);
-        coneMesh.position.copy(sitePos);
-        coneMesh.lookAt(endPoint);
-        fovFrustumGroup.add(coneMesh);
-
-        // Outer wireframe cone ring
-        const baseRingGeo = new THREE.RingGeometry(baseRadius * 0.96, baseRadius, 32);
-        const baseRingMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide });
-        const baseRingMesh = new THREE.Mesh(baseRingGeo, baseRingMat);
-        baseRingMesh.position.copy(endPoint);
-        baseRingMesh.lookAt(sitePos);
-        fovFrustumGroup.add(baseRingMesh);
-
-        updateGlobeSatellites();
-    }
-
-    function updateGlobeSatellites() {
-        if (!globeInitialized || !satMarkersGroup) return;
-        satMarkersGroup.clear();
-
-        const lat = parseFloat(siteLatInput?.value) || 23.4694;
-        const lon = parseFloat(siteLonInput?.value) || 120.8726;
-        const az = parseFloat(document.getElementById("point-az")?.value) || 180.0;
-        const alt = parseFloat(document.getElementById("point-alt")?.value) || 65.0;
-        const { sitePos, dir } = getTelescopePointingVector(lat, lon, az, alt);
-
-        const prof = buildCurrentSensorProfile();
-        const pixScale = 206265.0 * (prof.detector.pixel_size_um * 1e-6) / prof.optical.focal_length_m;
-        const fovDeg = Math.max((prof.detector.width_px * pixScale) / 3600.0, 1.5);
-
-        liveSatellites.forEach(sat => {
-            const transitMatch = transitingSatellites.find(t => t.name === sat.name);
-            const isInFov = transitMatch && transitMatch.is_in_fov;
-
-            // Compute 3D Satellite position from topocentric Az/Alt/Dist
-            const satAzRad = sat.az_deg * (Math.PI / 180);
-            const satAltRad = Math.max(0, sat.alt_deg) * (Math.PI / 180);
-            const { n, e, u } = getSiteFrame(lat, lon);
-            const satH = n.clone().multiplyScalar(Math.cos(satAzRad)).add(e.clone().multiplyScalar(Math.sin(satAzRad))).normalize();
-            const satDir = satH.clone().multiplyScalar(Math.cos(satAltRad)).add(u.clone().multiplyScalar(Math.sin(satAltRad))).normalize();
-
-            // Distance scaled to Earth radius (LEO ~ 500-1500km corresponds to 8-25 units)
-            const distKm = sat.distance_km || 1000.0;
-            const distUnits = Math.min(Math.max((distKm / 6378.137) * EARTH_RADIUS, 10), 65);
-            const satPos = sitePos.clone().add(satDir.multiplyScalar(distUnits));
-
-            if (isInFov) {
-                // Highlighting: Transiting through FOV (pulsing emerald beacon)
-                const satGeo = new THREE.SphereGeometry(2.4, 16, 16);
-                const satMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
-                const satMesh = new THREE.Mesh(satGeo, satMat);
-                satMesh.position.copy(satPos);
-                satMesh.userData = { satellite: sat, isTransit: true };
-                satMarkersGroup.add(satMesh);
-
-                // Emerald Beacon Ring
-                const ringGeo = new THREE.RingGeometry(3.2, 4.4, 32);
-                const ringMat = new THREE.MeshBasicMaterial({ color: 0x34d399, side: THREE.DoubleSide });
-                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-                ringMesh.position.copy(satPos);
-                ringMesh.lookAt(globeCamera.position);
-                satMarkersGroup.add(ringMesh);
-
-                // Line connecting from site to satellite
-                const rayGeo = new THREE.BufferGeometry().setFromPoints([sitePos, satPos]);
-                const rayMat = new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 2 });
-                satMarkersGroup.add(new THREE.Line(rayGeo, rayMat));
-            } else {
-                // Sleek target satellite point
-                const satGeo = new THREE.SphereGeometry(1.2, 12, 12);
-                const satMat = new THREE.MeshBasicMaterial({ color: transitMatch ? 0xf59e0b : 0x38bdf8 });
-                const satMesh = new THREE.Mesh(satGeo, satMat);
-                satMesh.position.copy(satPos);
-                satMesh.userData = { satellite: sat, isTransit: false };
-                satMarkersGroup.add(satMesh);
-            }
-        });
-    }
-
-    function focusGlobeOnSite() {
-        if (!globeControls || !globeCamera) return;
-        const lat = parseFloat(siteLatInput?.value) || 23.4694;
-        const lon = parseFloat(siteLonInput?.value) || 120.8726;
-        const targetPos = latLonToVector3(lat, lon, EARTH_RADIUS);
-        const camPos = targetPos.clone().multiplyScalar(2.1);
-
-        smoothMoveCamera(camPos, targetPos);
-    }
-
-    function focusGlobeOnTransitingSat() {
-        if (!globeControls || !globeCamera) return;
-        if (transitingSatellites.length > 0 && transitingSatellites[0].is_in_fov) {
-            focusGlobeOnSite();
+            payload = {
+                satsim_json: parsed,
+                use_gpu: document.getElementById("use-gpu-check").checked
+            };
         } else {
-            focusGlobeOnSite();
-        }
-    }
-
-    function smoothMoveCamera(newPos, newTarget) {
-        if (!globeControls || !globeCamera) return;
-        let t = 0;
-        const startPos = globeCamera.position.clone();
-        const startTarget = globeControls.target.clone();
-
-        function step() {
-            t += 0.05;
-            globeCamera.position.lerpVectors(startPos, newPos, Math.min(t, 1.0));
-            globeControls.target.lerpVectors(startTarget, newTarget, Math.min(t, 1.0));
-            globeControls.update();
-            if (t < 1.0) {
-                requestAnimationFrame(step);
+            try {
+                payload = buildFullFormConfig();
+            } catch (e) {
+                alert(`表單參數錯誤: ${e}`);
+                return;
             }
         }
-        step();
-    }
+
+        statusText.textContent = "SatSim 0.26 運算中...";
+        statusText.style.color = "var(--warning)";
+        headerStatusBadge.textContent = "運算中 (Computing)";
+        headerStatusBadge.className = "badge badge-info";
+        loadingOverlay.style.display = "flex";
+        btnRunSim.disabled = true;
+
+        consoleOutput.textContent += `\n[${new Date().toLocaleTimeString()}] 🚀 正在啟動 SatSim 0.26 原生核心運算...\n`;
+
+        fetch("/api/satsim/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(res => {
+            loadingOverlay.style.display = "none";
+            btnRunSim.disabled = false;
+
+            if (res.error) {
+                statusText.textContent = "失敗 (Error)";
+                statusText.style.color = "var(--danger)";
+                headerStatusBadge.textContent = "失敗 (Error)";
+                headerStatusBadge.className = "badge";
+                alert(`SatSim 模擬運算失敗: ${res.error}`);
+                consoleOutput.textContent += `\n[ERROR] SatSim 執行異常: ${res.error}\n`;
+                return;
+            }
+
+            simulationResult = res;
+            currentFrameIndex = 0;
+            pinnedObject = null;
+            hoveredObject = null;
+            resetInspectorPanel();
+
+            statusText.textContent = "完成 (Completed)";
+            statusText.style.color = "var(--success)";
+            headerStatusBadge.textContent = "就緒 (Ready)";
+            headerStatusBadge.className = "badge badge-action";
+
+            statusTime.textContent = `${res.execution_time_s} s`;
+            statusDevice.textContent = res.device_info;
+            deviceBadge.textContent = res.device_info;
+
+            placeholderView.style.display = "none";
+            simImage.style.display = "block";
+
+            // Frame Slider
+            frameSlider.min = 1;
+            frameSlider.max = res.num_frames;
+            frameSlider.value = 1;
+
+            updateFrameView(0);
+            populateDataTables(res);
+
+            // Populate Console Output
+            if (res.log_output) {
+                consoleOutput.textContent = res.log_output;
+                consoleOutput.scrollTop = consoleOutput.scrollHeight;
+            }
+
+            // Sync generated JSON back to editor if in form mode
+            if (res.satsim_config && activeConfigMode === "form") {
+                satsimJsonEditor.value = JSON.stringify(res.satsim_config, null, 2);
+                validateJsonEditor();
+            }
+
+            // Enable download buttons
+            btnDownloadAll.classList.remove("disabled");
+            btnDownloadFits.classList.remove("disabled");
+            btnDownloadPng.classList.remove("disabled");
+            btnDownloadCsv.classList.remove("disabled");
+            if (res.satnet_json_urls && res.satnet_json_urls.length > 0) {
+                btnDownloadSatnet.classList.remove("disabled");
+            }
+
+            switchToTab("image");
+        })
+        .catch(err => {
+            loadingOverlay.style.display = "none";
+            btnRunSim.disabled = false;
+            statusText.textContent = "連線異常";
+            statusText.style.color = "var(--danger)";
+            alert(`網路連線異常: ${err}`);
+        });
+    });
+
+    btnClearConsole.addEventListener("click", () => {
+        consoleOutput.textContent = "已清除記錄。";
+    });
 
     // ==========================================
-    // 6. Image Viewer: Zoom, Pan & Inspector
+    // 5. Image Viewer: Zoom, Pan & Hover Inspector
     // ==========================================
     function applyTransform() {
         if (!canvasTransformContainer) return;
@@ -984,7 +704,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const delta = e.deltaY < 0 ? 1.15 : 0.87;
         const newScale = Math.min(Math.max(zoomScale * delta, 0.2), 10.0);
 
-        // Adjust pan to zoom towards mouse position
         panX = mouseX - (mouseX - panX) * (newScale / zoomScale);
         panY = mouseY - (mouseY - panY) * (newScale / zoomScale);
         zoomScale = newScale;
@@ -1018,20 +737,43 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // ==========================================
-    // 7. Clean Annotations & Side Inspector
-    // ==========================================
+    function updateFrameView(idx) {
+        if (!simulationResult || !simulationResult.png_urls || !simulationResult.png_urls[idx]) return;
+        currentFrameIndex = idx;
+
+        simImage.src = simulationResult.png_urls[idx];
+        frameIndicator.textContent = `第 ${idx + 1} / ${simulationResult.num_frames} 幀`;
+        frameSlider.value = idx + 1;
+
+        // Download links
+        btnDownloadFits.href = simulationResult.fits_urls[idx];
+        btnDownloadPng.href = simulationResult.png_urls[idx];
+        if (simulationResult.csv_urls && simulationResult.csv_urls[idx]) {
+            btnDownloadCsv.href = simulationResult.csv_urls[idx];
+        }
+        if (simulationResult.satnet_json_urls && simulationResult.satnet_json_urls[idx]) {
+            btnDownloadSatnet.href = simulationResult.satnet_json_urls[idx];
+        }
+
+        simImage.onload = () => {
+            if (zoomScale === 1.0 && panX === 0 && panY === 0) {
+                zoomFit();
+            }
+            drawAnnotations();
+        };
+    }
+
     function getInteractiveObjectsForCurrentFrame() {
         if (!simulationResult) return [];
         const items = [];
 
-        // RSO Targets
+        // SatSim Targets
         if (simulationResult.targets) {
             simulationResult.targets.forEach(tgt => {
                 if (tgt.frame === currentFrameIndex) {
                     items.push({
                         type: "rso",
-                        name: tgt.target_name || "RSO Target",
+                        name: tgt.target_name || "SatSim RSO",
                         x: tgt.center_pixel ? tgt.center_pixel[0] : 0,
                         y: tgt.center_pixel ? tgt.center_pixel[1] : 0,
                         start_pixel: tgt.start_pixel,
@@ -1048,7 +790,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
 
-        // Stars
+        // SatSim Stars
         if (simulationResult.stars) {
             simulationResult.stars.forEach(s => {
                 if (s.frame === currentFrameIndex) {
@@ -1078,7 +820,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (!simImage || !simImage.naturalWidth) return;
 
-        // Size overlay canvas exactly 1:1 with detector resolution
         const imgW = simImage.naturalWidth;
         const imgH = simImage.naturalHeight;
         overlayCanvas.width = imgW;
@@ -1095,12 +836,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const items = getInteractiveObjectsForCurrentFrame();
 
-        // Draw ONLY clean bounding boxes (NO TEXT ON CANVAS)
+        // Draw clean bounding boxes (NO TEXT on canvas)
         items.forEach(item => {
             const isHovered = (hoveredObject && hoveredObject.name === item.name) || (pinnedObject && pinnedObject.name === item.name);
 
             if (item.type === "rso") {
-                // RSO: Cyan Box
                 ctx.strokeStyle = isHovered ? "#38bdf8" : "rgba(56, 189, 248, 0.85)";
                 ctx.lineWidth = isHovered ? 3.0 : 1.6;
 
@@ -1117,7 +857,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     ctx.fillRect(bx, by, Math.max(bw, 10), Math.max(bh, 10));
                 }
 
-                // Streak line if elongated
                 if (item.start_pixel && item.end_pixel && item.streak_length_px > 1) {
                     ctx.strokeStyle = "#ef4444";
                     ctx.lineWidth = 1.8;
@@ -1127,7 +866,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     ctx.stroke();
                 }
             } else {
-                // Stars: Emerald Green Box
                 ctx.strokeStyle = isHovered ? "#34d399" : "rgba(16, 185, 129, 0.75)";
                 ctx.lineWidth = isHovered ? 2.5 : 1.2;
 
@@ -1237,12 +975,12 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             inspectorBadge.textContent = "⭐ 視場恆星 (Star)";
             inspectorBadge.className = "target-badge badge-star";
-            inspectorStreak.textContent = `${item.size_px ? item.size_px.toFixed(1) : 3} px (點斑光度)`;
+            inspectorStreak.textContent = `${item.size_px ? item.size_px.toFixed(1) : 3} px (點斑)`;
         }
 
         inspectorName.textContent = item.name;
         inspectorPixel.textContent = `(${Math.round(item.x)}, ${Math.round(item.y)})`;
-        inspectorRadec.textContent = item.radec ? item.radec : "依相機 WCS 自動校準";
+        inspectorRadec.textContent = item.radec ? item.radec : "SatSim WCS 座標";
         inspectorVmag.textContent = item.vmag != null ? `V = ${item.vmag.toFixed(2)}` : "--";
         inspectorSnr.textContent = item.snr != null ? `${item.snr.toFixed(1)}` : "--";
         inspectorElectrons.textContent = item.electrons != null ? `${Math.round(item.electrons).toLocaleString()} e-` : "--";
@@ -1257,222 +995,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     toggleAnnotations.addEventListener("change", drawAnnotations);
 
-    // ==========================================
-    // 8. Run Simulation & Native SatSim Execution
-    // ==========================================
-    function buildFullConfig() {
-        const coordRadio = document.querySelector("input[name='coord-frame']:checked");
-        const coordFrame = coordRadio ? coordRadio.value : "radec";
-
-        const trackingRadio = document.querySelector("input[name='tracking-mode']:checked");
-        const trackingMode = trackingRadio ? trackingRadio.value : "sidereal";
-
-        const orbitMode = orbitModeSelect ? orbitModeSelect.value : "smart_transit";
-
-        const gpuCheck = document.getElementById("use-gpu-check");
-        const useGpu = gpuCheck ? gpuCheck.checked : true;
-
-        let targets = [];
-        const vmagInput = document.getElementById("target-vmag");
-        const vmag = vmagInput ? (parseFloat(vmagInput.value) || 7.5) : 7.5;
-
-        if (orbitMode === "smart_transit") {
-            const altKm = parseFloat(document.getElementById("target-alt-km")?.value) || 500.0;
-            const angle = parseFloat(document.getElementById("target-angle")?.value) || 35.0;
-            targets.push({
-                name: "Smart_Transit_RSO",
-                mode: "smart_transit",
-                transit_altitude_km: altKm,
-                transit_angle_deg: angle,
-                visual_magnitude: vmag
-            });
-        } else if (orbitMode === "live_sat") {
-            const opt = liveSatSelect && liveSatSelect.selectedIndex >= 0 ? liveSatSelect.options[liveSatSelect.selectedIndex] : null;
-            if (opt && opt.dataset && opt.dataset.tle1) {
-                targets.push({
-                    name: opt.dataset.name || "Live_RSO",
-                    mode: "tle",
-                    tle1: opt.dataset.tle1,
-                    tle2: opt.dataset.tle2,
-                    visual_magnitude: parseFloat(opt.dataset.vmag) || vmag
-                });
-            } else {
-                targets.push({
-                    name: "ISS",
-                    mode: "tle",
-                    visual_magnitude: vmag
-                });
-            }
-        } else if (orbitMode === "preset_tle") {
-            const presetSelect = document.getElementById("tle-preset-select");
-            const presetKey = presetSelect ? presetSelect.value : "iss";
-            targets.push({
-                name: presetKey.toUpperCase(),
-                mode: "tle",
-                visual_magnitude: vmag
-            });
-        } else {
-            const tle1Input = document.getElementById("custom-tle1");
-            const tle2Input = document.getElementById("custom-tle2");
-            targets.push({
-                name: "Custom_TLE_Satellite",
-                mode: "tle",
-                tle1: tle1Input ? tle1Input.value.trim() : "",
-                tle2: tle2Input ? tle2Input.value.trim() : "",
-                visual_magnitude: vmag
-            });
-        }
-
-        const expTime = parseFloat(document.getElementById("exposure-time")?.value) || 2.0;
-        const frames = parseInt(document.getElementById("frame-count")?.value) || 1;
-        const interval = expTime + 0.5;
-        const totalDuration = interval * frames;
-
-        const startTimeStr = document.getElementById("start-time") ? document.getElementById("start-time").value : "2026-10-19T20:00:00Z";
-        let t0 = new Date(startTimeStr);
-        if (isNaN(t0.getTime())) {
-            t0 = new Date();
-        }
-        const t1 = new Date(t0.getTime() + totalDuration * 1000);
-
-        const siteName = (sitePresetSelect && sitePresetSelect.selectedIndex >= 0 && sitePresetSelect.options[sitePresetSelect.selectedIndex])
-            ? sitePresetSelect.options[sitePresetSelect.selectedIndex].text
-            : "Lulin";
-
-        return {
-            site: {
-                name: siteName,
-                lat_deg: parseFloat(siteLatInput?.value) || 23.4694,
-                lon_deg: parseFloat(siteLonInput?.value) || 120.8726,
-                alt_m: parseFloat(siteAltInput?.value) || 2862.0
-            },
-            pointing: {
-                coord_frame: coordFrame,
-                ra_deg: parseFloat(document.getElementById("point-ra")?.value) || 88.79,
-                dec_deg: parseFloat(document.getElementById("point-dec")?.value) || 7.41,
-                az_deg: parseFloat(document.getElementById("point-az")?.value) || 180.0,
-                alt_deg: parseFloat(document.getElementById("point-alt")?.value) || 65.0,
-                roll_deg: parseFloat(document.getElementById("point-roll")?.value) || 0.0,
-                tracking_mode: trackingMode
-            },
-            atmosphere: {
-                seeing_fwhm_arcsec: parseFloat(document.getElementById("seeing-fwhm")?.value) || 1.5,
-                extinction_kv: parseFloat(document.getElementById("extinction-kv")?.value) || 0.15,
-                cloud_cover_percent: parseFloat(cloudSlider?.value) || 0.0,
-                bortle_class: parseInt(document.getElementById("bortle-class")?.value) || 2,
-                moon_illumination: 0.0
-            },
-            sensor: buildCurrentSensorProfile(),
-            targets: targets,
-            start_time_iso: t0.toISOString(),
-            end_time_iso: t1.toISOString(),
-            exposure_time_s: expTime,
-            readout_time_s: 0.5,
-            engine: "satsim",
-            use_gpu: useGpu,
-            device_id: 0
-        };
-    }
-
-    btnRunSim.addEventListener("click", () => {
-        switchToTab("image");
-        let config;
-        try {
-            config = buildFullConfig();
-        } catch (e) {
-            alert(`參數設定錯誤: ${e}`);
-            return;
-        }
-
-        statusText.textContent = "SatSim 原生運算中...";
-        statusText.style.color = "var(--warning)";
-        loadingOverlay.style.display = "flex";
-        btnRunSim.disabled = true;
-
-        fetch("/api/simulate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(config)
-        })
-        .then(r => r.json())
-        .then(res => {
-            loadingOverlay.style.display = "none";
-            btnRunSim.disabled = false;
-
-            if (res.error) {
-                statusText.textContent = "運算失敗 (Error)";
-                statusText.style.color = "var(--danger)";
-                alert(`模擬失敗: ${res.error}`);
-                return;
-            }
-
-            simulationResult = res;
-            currentFrameIndex = 0;
-            pinnedObject = null;
-            hoveredObject = null;
-            resetInspectorPanel();
-
-            statusText.textContent = "完成 (Completed)";
-            statusText.style.color = "var(--success)";
-            statusTime.textContent = `${res.execution_time_s} s`;
-            statusDevice.textContent = res.device_info;
-
-            placeholderView.style.display = "none";
-            simImage.style.display = "block";
-
-            // Frame Slider
-            frameSlider.min = 1;
-            frameSlider.max = res.num_frames;
-            frameSlider.value = 1;
-
-            updateFrameView(0);
-            populateDataTables(res);
-
-            // Enable download buttons
-            btnDownloadAll.classList.remove("disabled");
-            btnDownloadFits.classList.remove("disabled");
-            btnDownloadPng.classList.remove("disabled");
-            btnDownloadAnnotatedPng.classList.remove("disabled");
-            btnDownloadCsv.classList.remove("disabled");
-        })
-        .catch(err => {
-            loadingOverlay.style.display = "none";
-            btnRunSim.disabled = false;
-            statusText.textContent = "連線異常";
-            statusText.style.color = "var(--danger)";
-            alert(`網路連線異常: ${err}`);
-        });
-    });
-
-    function updateFrameView(idx) {
-        if (!simulationResult || !simulationResult.png_urls || !simulationResult.png_urls[idx]) return;
-        currentFrameIndex = idx;
-
-        simImage.src = simulationResult.png_urls[idx];
-        frameIndicator.textContent = `第 ${idx + 1} / ${simulationResult.num_frames} 幀`;
-        frameSlider.value = idx + 1;
-
-        // Download links
-        btnDownloadFits.href = simulationResult.fits_urls[idx];
-        btnDownloadPng.href = simulationResult.png_urls[idx];
-        if (simulationResult.annotated_png_urls && simulationResult.annotated_png_urls[idx]) {
-            btnDownloadAnnotatedPng.href = simulationResult.annotated_png_urls[idx];
-        }
-        if (simulationResult.csv_urls && simulationResult.csv_urls[idx]) {
-            btnDownloadCsv.href = simulationResult.csv_urls[idx];
-        }
-
-        simImage.onload = () => {
-            if (zoomScale === 1.0 && panX === 0 && panY === 0) {
-                zoomFit();
-            }
-            drawAnnotations();
-        };
-    }
-
-    // ==========================================
-    // 9. Data Catalog & Export
-    // ==========================================
+    // Populate Data Catalog Tables
     function populateDataTables(res) {
         // RSO Table
         tableRsoBody.innerHTML = "";
@@ -1508,12 +1031,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     <td>${s.vmag}</td>
                     <td>${s.snr}</td>
                     <td>${Math.round(s.electrons).toLocaleString()} e-</td>
-                    <td>${s.is_streak ? '條紋 (Stare)' : '點斑 (Point)'}</td>
                 `;
                 tableStarsBody.appendChild(tr);
             });
         } else {
-            tableStarsBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">未偵測到恆星</td></tr>`;
+            tableStarsBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">未偵測到恆星</td></tr>`;
         }
     }
 
@@ -1546,7 +1068,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "/api/download/all";
     });
 
-    // Stretch Filters
+    // Contrast Stretch Toggles
     const stretchButtons = document.querySelectorAll(".btn-stretch");
     stretchButtons.forEach(btn => {
         btn.addEventListener("click", () => {
@@ -1568,9 +1090,4 @@ document.addEventListener("DOMContentLoaded", () => {
             simImage.style.filter = "none";
         }
     }
-
-    // Initial Setups
-    fetchSensors("sony_imx455");
-    fetchLiveSkyMap();
-    fetchTransitingSatellites();
 });

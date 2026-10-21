@@ -261,7 +261,12 @@ def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict
     annotated_png_paths = []
     csv_paths = []
 
-    h_px = result.config.sensor.detector.height_px
+    if hasattr(result.config, "sensor"):
+        h_px = result.config.sensor.detector.height_px
+    elif isinstance(result.config, dict):
+        h_px = int(result.config.get("fpa", {}).get("height", 512))
+    else:
+        h_px = 512
 
     for i, frame in enumerate(result.frames):
         fits_p = os.path.join(output_dir, f"frame_{i+1:03d}.fits")
@@ -269,7 +274,14 @@ def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict
         ann_png_p = os.path.join(output_dir, f"frame_{i+1:03d}_annotated.png")
         csv_p = os.path.join(output_dir, f"frame_{i+1:03d}_annotations.csv")
 
-        save_fits(frame, result.config, frame_index=i, output_path=fits_p)
+        if isinstance(result.config, StarSimConfig):
+            save_fits(frame, result.config, frame_index=i, output_path=fits_p)
+        else:
+            fits_hdr = fits.Header()
+            fits_hdr["VERSION"] = ("SatSim 0.26", "Engine version")
+            fits_hdr["FRAME"] = (i + 1, "Frame index")
+            hdu = fits.PrimaryHDU(frame, header=fits_hdr)
+            hdu.writeto(fits_p, overwrite=True)
         save_png(frame, output_path=png_p, stretch="zscale")
         save_annotated_png(png_p, ann_png_p, result.stars_projected, result.targets_projected, frame_index=i, height_px=h_px)
         save_annotations_csv(csv_p, result.stars_projected, result.targets_projected, frame_index=i)
@@ -288,7 +300,7 @@ def save_simulation_artifacts(result: SimulationResult, output_dir: str) -> Dict
         "stars_detected_count": len(result.stars_projected),
         "stars": result.stars_projected,
         "targets": result.targets_projected,
-        "config": result.config.to_dict()
+        "config": result.config.to_dict() if hasattr(result.config, "to_dict") else result.config
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta_dict, f, indent=2, ensure_ascii=False)

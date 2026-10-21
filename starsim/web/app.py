@@ -1,4 +1,5 @@
-"""Flask Web server and REST API for StarSim interactive dashboard.
+"""Flask Web server and REST API for SatSim Native GUI dashboard.
+Directly interfaces with Air Force Research Laboratory (AFRL) SatSim 0.26 engine.
 """
 
 from __future__ import annotations
@@ -7,6 +8,7 @@ import json
 import zipfile
 import tempfile
 import time
+import glob
 from io import BytesIO
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
@@ -16,9 +18,9 @@ from ..sensor import list_available_sensors, load_sensor, SensorProfile, get_def
 from ..site import list_preset_observatories, ObservationSite
 from ..pointing import PointingDirection, TrackingMode
 from ..atmosphere import AtmosphericConditions
-from ..orbit import TargetOrbit, OrbitMode, POPULAR_TLES, LiveSatelliteManager
+from ..orbit import TargetOrbit, OrbitMode, POPULAR_TLES
 from ..engine.satsim_bridge import SatSimBridgeEngine
-from ..io import save_simulation_artifacts, apply_contrast_stretch
+from ..io import save_simulation_artifacts
 
 
 def create_app(output_dir: str = "./output") -> Flask:
@@ -40,6 +42,87 @@ def create_app(output_dir: str = "./output") -> Flask:
     @app.route("/")
     def index():
         return render_template("index.html", version=int(time.time()))
+
+    @app.route("/api/satsim/templates", methods=["GET"])
+    def get_satsim_templates():
+        """Return official native SatSim 0.26 JSON templates."""
+        return jsonify(SatSimBridgeEngine.get_default_templates())
+
+    @app.route("/api/satsim/generate_config", methods=["POST"])
+    def generate_satsim_config():
+        """Translate frontend form parameters into native SatSim 0.26 JSON configuration."""
+        try:
+            req_data = request.get_json(force=True)
+            config = StarSimConfig.from_dict(req_data)
+            ssp = satsim_engine.build_satsim_config(config)
+            return jsonify({"success": True, "satsim_config": ssp})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+
+    @app.route("/api/satsim/run", methods=["POST"])
+    @app.route("/api/simulate", methods=["POST"])
+    def run_satsim():
+        """Run native SatSim simulation directly from either form parameters or raw SatSim JSON."""
+        try:
+            req_data = request.get_json(force=True)
+            run_output_dir = os.path.join(app.config["OUTPUT_DIR"], "web_run")
+            os.makedirs(run_output_dir, exist_ok=True)
+            for old_f in glob.glob(os.path.join(run_output_dir, "frame_*.*")):
+                try:
+                    os.remove(old_f)
+                except Exception:
+                    pass
+
+            # Case A: User supplied raw native SatSim JSON
+            if "satsim_json" in req_data or "version" in req_data or "sim" in req_data:
+                ssp = req_data.get("satsim_json", req_data)
+                use_gpu = bool(req_data.get("use_gpu", True))
+                device_id = int(req_data.get("device_id", 0))
+
+                result = satsim_engine.run_raw(ssp, run_output_dir, use_gpu=use_gpu, device_id=device_id)
+            else:
+                # Case B: Standard form parameters
+                config = StarSimConfig.from_dict(req_data)
+                config.output_dir = run_output_dir
+                result = satsim_engine.run(config)
+
+            # Generate PNG preview images and CSV artifacts
+            artifacts = save_simulation_artifacts(result, run_output_dir)
+
+            # Build relative URLs for frontend display
+            png_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["png"]]
+            fits_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["fits"]]
+            csv_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts.get("csv", [])]
+
+            # SatNet annotation JSON files
+            satnet_json_files = []
+            satsim_run_dir = os.path.join(run_output_dir, "satsim_run")
+            if os.path.exists(satsim_run_dir):
+                for root, _, files in os.walk(satsim_run_dir):
+                    for file in sorted(files):
+                        if file.endswith(".json") and file.startswith("sat_"):
+                            rel_p = os.path.relpath(os.path.join(root, file), run_output_dir).replace(os.sep, '/')
+                            satnet_json_files.append(f"/output/web_run/{rel_p}")
+
+            return jsonify({
+                "success": True,
+                "execution_time_s": result.execution_time_s,
+                "device_info": result.device_info,
+                "num_frames": len(result.frames),
+                "png_urls": png_urls,
+                "fits_urls": fits_urls,
+                "csv_urls": csv_urls,
+                "satnet_json_urls": satnet_json_files,
+                "stars_count": len(result.stars_projected),
+                "stars": result.stars_projected,
+                "targets": result.targets_projected,
+                "log_output": getattr(result, "log_output", ""),
+                "satsim_config": result.config if isinstance(result.config, dict) else satsim_engine.build_satsim_config(result.config)
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/sites", methods=["GET"])
     def get_sites():
@@ -84,141 +167,6 @@ def create_app(output_dir: str = "./output") -> Flask:
     def get_tle_presets():
         return jsonify(POPULAR_TLES)
 
-    @app.route("/api/rso/sky_map", methods=["GET"])
-    def get_rso_sky_map():
-        """Get live topocentric sky coordinates of satellites for the sky dome radar map."""
-        try:
-            lat = float(request.args.get("lat", 23.4694))
-            lon = float(request.args.get("lon", 120.8726))
-            alt = float(request.args.get("alt", 2862.0))
-            time_iso = request.args.get("time", "2026-10-19T20:00:00Z")
-            group = request.args.get("group", "visual")
-
-            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
-            satellites = LiveSatelliteManager.get_sky_positions(site, time_iso, group=group, min_alt_deg=0.0)
-            return jsonify({
-                "site": site.to_dict(),
-                "time": time_iso,
-                "group": group,
-                "count": len(satellites),
-                "satellites": satellites
-            })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/rso/transits", methods=["GET"])
-    def get_rso_transits():
-        """Find satellites transiting or passing through the telescope FOV during the exposure window."""
-        try:
-            lat = float(request.args.get("lat", 23.4694))
-            lon = float(request.args.get("lon", 120.8726))
-            alt = float(request.args.get("alt", 2862.0))
-            ra = float(request.args.get("ra", 88.79))
-            dec = float(request.args.get("dec", 7.41))
-            fov_w = float(request.args.get("fov_w", 0.5))
-            fov_h = float(request.args.get("fov_h", 0.5))
-            start_iso = request.args.get("start_time", "2026-10-19T20:00:00Z")
-            end_iso = request.args.get("end_time", "2026-10-19T20:00:10Z")
-            group = request.args.get("group", "visual")
-
-            coord_frame = request.args.get("coord_frame", "radec")
-            az = float(request.args.get("az", 180.0))
-            alt_pt = float(request.args.get("alt_pt", 65.0))
-
-            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
-            if coord_frame == "altaz":
-                pointing = PointingDirection(coord_frame="altaz", az_deg=az, alt_deg=alt_pt)
-                ra, dec = pointing.get_equatorial(site, start_iso)
-
-            transits = LiveSatelliteManager.find_transiting_satellites(
-                site=site,
-                pointing_ra_deg=ra,
-                pointing_dec_deg=dec,
-                fov_deg=(fov_w, fov_h),
-                t_start_iso=start_iso,
-                t_end_iso=end_iso,
-                group=group
-            )
-            return jsonify({
-                "transits_count": len(transits),
-                "transits": transits
-            })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/rso/nearest", methods=["GET"])
-    def get_nearest_rso():
-        """Find the nearest or highest overhead satellite."""
-        try:
-            lat = float(request.args.get("lat", 23.4694))
-            lon = float(request.args.get("lon", 120.8726))
-            alt = float(request.args.get("alt", 2862.0))
-            ra = float(request.args.get("ra", 88.79))
-            dec = float(request.args.get("dec", 7.41))
-            time_iso = request.args.get("time", "2026-10-19T20:00:00Z")
-            group = request.args.get("group", "visual")
-
-            site = ObservationSite(name="Current Site", lat_deg=lat, lon_deg=lon, alt_m=alt)
-            sat = LiveSatelliteManager.find_nearest_satellite(
-                site=site,
-                obstime_iso=time_iso,
-                pointing_ra_deg=ra,
-                pointing_dec_deg=dec,
-                group=group
-            )
-            return jsonify({"satellite": sat})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/rso/update", methods=["POST"])
-    def update_live_tles():
-        """Force fetch real-time updated satellite TLEs from CelesTrak."""
-        try:
-            group = request.args.get("group", "visual")
-            satellites = LiveSatelliteManager.fetch_or_load_tles(group=group, force_refresh=True)
-            return jsonify({
-                "message": f"Successfully updated {len(satellites)} live satellites from CelesTrak ({group})",
-                "count": len(satellites)
-            })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/simulate", methods=["POST"])
-    def run_simulation():
-        try:
-            req_data = request.get_json(force=True)
-            config = StarSimConfig.from_dict(req_data)
-            config.output_dir = os.path.join(app.config["OUTPUT_DIR"], "web_run")
-
-            # Execute simulation natively through SatSim
-            result = satsim_engine.run(config)
-            artifacts = save_simulation_artifacts(result, config.output_dir)
-
-            # Build relative URLs for frontend display
-            png_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["png"]]
-            annotated_png_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts.get("annotated_png", [])]
-            fits_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts["fits"]]
-            csv_urls = [f"/output/web_run/{os.path.basename(p)}" for p in artifacts.get("csv", [])]
-
-            return jsonify({
-                "success": True,
-                "execution_time_s": result.execution_time_s,
-                "device_info": result.device_info,
-                "num_frames": len(result.frames),
-                "png_urls": png_urls,
-                "annotated_png_urls": annotated_png_urls,
-                "fits_urls": fits_urls,
-                "csv_urls": csv_urls,
-                "stars_count": len(result.stars_projected),
-                "stars": result.stars_projected,
-                "targets": result.targets_projected,
-                "config": config.to_dict()
-            })
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": str(e)}), 500
-
     @app.route("/output/<path:filename>")
     def serve_output(filename):
         return send_from_directory(app.config["OUTPUT_DIR"], filename)
@@ -243,12 +191,14 @@ def create_app(output_dir: str = "./output") -> Flask:
             memory_file,
             mimetype="application/zip",
             as_attachment=True,
-            download_name="starsim_simulation_results.zip"
+            download_name="satsim_simulation_results.zip"
         )
 
     return app
 
 
 def start_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False, output_dir: str = "./output"):
-    app = create_app(output_dir)
-    app.run(host=host, port=port, debug=debug, threaded=True)
+    """Start Flask server for SatSim Native GUI."""
+    app = create_app(output_dir=output_dir)
+    app.run(host=host, port=port, debug=debug)
+

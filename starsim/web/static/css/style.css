@@ -900,132 +900,156 @@ select.form-control {
     white-space: nowrap;
 }
 
-/* Sky Dome Radar Container */
-.skydome-container {
+/* Configuration Mode Switch Bar (Form vs Raw JSON) */
+.mode-switch-bar {
     display: flex;
-    gap: 16px;
-    flex: 1;
-    min-height: 0;
-}
-
-/* 3D Earth Globe Visualizer Container */
-.skydome-container {
-    display: flex;
-    gap: 16px;
-    flex: 1;
-    min-height: 0;
-}
-
-.skydome-left {
-    flex: 1.2;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.earth-globe-wrapper {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 480px;
-    background-color: #02040a;
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    overflow: hidden;
-}
-
-#earth-globe-container {
-    flex: 1;
-    width: 100%;
-    min-height: 420px;
-    position: relative;
-    cursor: grab;
-}
-
-#earth-globe-container:active {
-    cursor: grabbing;
-}
-
-.globe-toolbar {
-    display: flex;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: 6px;
+    padding: 8px 14px;
     background-color: var(--panel-bg);
-    border-top: 1px solid var(--panel-border);
-    flex-wrap: wrap;
-    align-items: center;
-    z-index: 10;
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
 }
 
-.btn-globe-action {
+.btn-mode-tab {
+    flex: 1;
     background-color: var(--input-bg);
     border: 1px solid var(--input-border);
-    color: var(--text-main);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 11px;
+    color: var(--text-muted);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
 }
 
-.btn-globe-action:hover, .btn-globe-action.active {
-    background-color: var(--accent);
+.btn-mode-tab:hover {
+    color: #fff;
     border-color: var(--accent);
-    color: #000;
+}
+
+.btn-mode-tab.active {
+    background-color: rgba(56, 189, 248, 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
     font-weight: 600;
 }
 
-.skydome-legend {
+.config-mode-content {
     display: flex;
-    gap: 14px;
-    font-size: 11px;
-    color: var(--text-muted);
-    padding: 6px 12px;
-    background-color: rgba(7, 10, 18, 0.85);
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 12px;
 }
 
-.legend-item {
+.tracking-mode-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.radio-inline {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-main);
+    cursor: pointer;
 }
 
-.dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+/* Native SatSim JSON Editor */
+.h-full-json {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-height: 520px;
 }
 
-.dot-site { background-color: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
-.dot-cone { background-color: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
-.dot-sat { background-color: #94a3b8; }
-.dot-transit { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+.json-actions-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
 
-.skydome-right {
+.json-btn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.json-editor-wrapper {
+    flex: 1;
+    min-height: 380px;
+    display: flex;
+    position: relative;
+}
+
+.json-textarea {
+    width: 100%;
+    height: 100%;
+    min-height: 380px;
+    background-color: #030712;
+    color: #38bdf8;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+    tab-size: 2;
+}
+
+.json-textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.json-status-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 2px 4px;
+}
+
+/* SatSim Console Log View */
+.console-wrapper {
     flex: 1;
     display: flex;
     flex-direction: column;
+    background-color: #020408;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    overflow: hidden;
     min-height: 0;
 }
 
-.transit-table-wrapper {
-    flex: 1;
-    overflow-y: auto;
-    background-color: var(--input-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: 6px;
-    margin-bottom: 8px;
+.console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 14px;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
 }
 
-.skydome-hint {
-    font-size: 11px;
+.console-title {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--accent);
-    padding: 6px;
-    background-color: rgba(56, 189, 248, 0.08);
-    border-radius: 4px;
+}
+
+.console-body {
+    flex: 1;
+    padding: 14px;
+    overflow-y: auto;
+    color: #67e8f9;
+    font-size: 11.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: text;
 }
 
 /* Data Catalog Container */
