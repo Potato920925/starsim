@@ -73,10 +73,12 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "config": {
                     "version": "0.26.0",
                     "sim": {
+                        "mode": "epsf",
+                        "epsf": {"kernel_size": 33},
                         "samples": 1,
                         "spatial_osf": 1,
                         "temporal_osf": 1,
-                        "padding": 0,
+                        "padding": 16,
                         "save_jpeg": False,
                         "show_obs_boxes": True,
                         "show_star_boxes": True,
@@ -136,10 +138,12 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "config": {
                     "version": "0.26.0",
                     "sim": {
+                        "mode": "epsf",
+                        "epsf": {"kernel_size": 33},
                         "samples": 1,
                         "spatial_osf": 1,
                         "temporal_osf": 5,
-                        "padding": 0,
+                        "padding": 16,
                         "save_jpeg": False,
                         "show_obs_boxes": False,
                         "show_star_boxes": True,
@@ -188,10 +192,12 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "config": {
                     "version": "0.26.0",
                     "sim": {
+                        "mode": "epsf",
+                        "epsf": {"kernel_size": 33},
                         "samples": 1,
                         "spatial_osf": 1,
                         "temporal_osf": 1,
-                        "padding": 0,
+                        "padding": 16,
                         "save_jpeg": False,
                         "show_obs_boxes": True,
                         "show_star_boxes": True,
@@ -251,10 +257,12 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "config": {
                     "version": "0.26.0",
                     "sim": {
+                        "mode": "epsf",
+                        "epsf": {"kernel_size": 33},
                         "samples": 1,
                         "spatial_osf": 1,
                         "temporal_osf": 1,
-                        "padding": 0,
+                        "padding": 16,
                         "save_jpeg": False,
                         "show_obs_boxes": True,
                         "show_star_boxes": True,
@@ -390,10 +398,14 @@ class SatSimBridgeEngine(BaseSimulationEngine):
         ssp = {
             "version": "0.26.0",
             "sim": {
+                "mode": "epsf",
+                "epsf": {
+                    "kernel_size": 33
+                },
                 "samples": 1,
                 "spatial_osf": 1,
                 "temporal_osf": 1,
-                "padding": 0,
+                "padding": 16,
                 "save_jpeg": False,
                 "show_obs_boxes": True,
                 "show_star_boxes": True,
@@ -487,9 +499,18 @@ class SatSimBridgeEngine(BaseSimulationEngine):
         ssp = json.loads(json.dumps(ssp))
         if "sim" not in ssp:
             ssp["sim"] = {}
+        # Ensure optimal simulation mode (epsf avoids FFT circular convolution boundary wrap & cross flare)
+        ssp["sim"].setdefault("mode", "epsf")
+        if ssp["sim"].get("mode") == "epsf":
+            if "epsf" not in ssp["sim"] or not isinstance(ssp["sim"]["epsf"], dict):
+                ssp["sim"]["epsf"] = {"kernel_size": 33}
+            else:
+                ssp["sim"]["epsf"].setdefault("kernel_size", 33)
+            ssp["sim"].setdefault("padding", 16)
+        else:
+            ssp["sim"].setdefault("padding", 0)
         ssp["sim"].setdefault("spatial_osf", 1)
         ssp["sim"].setdefault("temporal_osf", 1)
-        ssp["sim"].setdefault("padding", 0)
         ssp["sim"].setdefault("apply_star_wrap_around", False)
         ssp["sim"].setdefault("star_render_mode", "transform")
         ssp["sim"].setdefault("calculate_snr", True)
