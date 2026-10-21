@@ -20,6 +20,25 @@
     padding: 0;
 }
 
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(13, 19, 34, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(56, 189, 248, 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(56, 189, 248, 0.6);
+}
+
 body {
     background-color: var(--bg-dark);
     color: var(--text-main);
@@ -110,24 +129,30 @@ body {
     font-weight: 600;
 }
 
-/* Main Container */
-.main-container {
+/* Main Container & Layout */
+.main-container, .main-layout {
     display: flex;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
+    min-width: 0;
 }
 
-/* Sidebar */
-.sidebar {
-    width: 450px;
+/* Sidebar & Sidebar Panel */
+.sidebar, .sidebar-panel {
+    width: 440px;
+    max-width: 38vw;
+    min-width: 340px;
     background-color: var(--panel-bg);
     border-right: 1px solid var(--panel-border);
     overflow-y: auto;
-    padding: 14px 16px;
+    overflow-x: hidden;
+    padding: 14px 16px 24px 16px;
     display: flex;
     flex-direction: column;
     gap: 14px;
     flex-shrink: 0;
+    height: 100%;
 }
 
 .panel-section {
@@ -414,13 +439,29 @@ select.form-control {
     cursor: not-allowed;
 }
 
+.btn-icon {
+    font-size: 14px;
+    margin-right: 4px;
+    display: inline-block;
+}
+
+.toolbar-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
 /* Action Section */
 .action-section {
     position: sticky;
-    bottom: 0;
+    bottom: -24px;
     background-color: var(--panel-bg);
-    padding-top: 6px;
-    z-index: 10;
+    padding: 10px 0 14px 0;
+    margin-top: auto;
+    border-top: 1px solid var(--panel-border);
+    box-shadow: 0 -6px 14px rgba(7, 10, 18, 0.7);
+    z-index: 20;
 }
 
 /* Viewport Area */
@@ -431,6 +472,8 @@ select.form-control {
     padding: 12px 18px;
     overflow: hidden;
     gap: 10px;
+    min-height: 0;
+    min-width: 0;
 }
 
 /* View Header Row */
@@ -615,11 +658,11 @@ select.form-control {
     position: relative;
     overflow: hidden;
     background-color: #020408;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     cursor: grab;
     user-select: none;
+    min-height: 0;
+    min-width: 0;
 }
 
 .canvas-viewport.grabbing {
@@ -627,7 +670,9 @@ select.form-control {
 }
 
 .canvas-transform-container {
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
     transform-origin: 0 0;
     will-change: transform;
     display: inline-block;
@@ -805,9 +850,15 @@ select.form-control {
 }
 
 .placeholder-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
     text-align: center;
     max-width: 400px;
     color: var(--text-muted);
+    pointer-events: none;
+    z-index: 5;
 }
 
 .placeholder-icon {
@@ -939,6 +990,7 @@ select.form-control {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    padding-bottom: 24px;
 }
 
 .tracking-mode-group {
@@ -1066,6 +1118,7 @@ select.form-control {
     border: 1px solid var(--panel-border);
     border-radius: 8px;
     padding: 12px;
+    overflow-x: auto;
 }
 
 .catalog-section h3 {

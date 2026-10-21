@@ -688,8 +688,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     btnZoom100.addEventListener("click", () => {
         zoomScale = 1.0;
-        panX = 0;
-        panY = 0;
+        if (simImage && simImage.naturalWidth && canvasViewport) {
+            const vpRect = canvasViewport.getBoundingClientRect();
+            panX = (vpRect.width - simImage.naturalWidth) / 2;
+            panY = (vpRect.height - simImage.naturalHeight) / 2;
+        } else {
+            panX = 0;
+            panY = 0;
+        }
         applyTransform();
     });
 
