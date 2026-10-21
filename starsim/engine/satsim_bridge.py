@@ -35,7 +35,7 @@ from ..stars import StarCatalog, project_gnomonic_tan, calculate_star_electrons
 
 def get_satsim_catalog_file() -> str:
     """Return path to headerless CSV catalog required by SatSim (id, vmag, ra_deg, dec_deg)."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     target = os.path.join(base_dir, "data", "stars", "satsim_star_catalog.csv")
     if not os.path.exists(target):
         # Auto-generate from star_catalog_bsc5.csv if missing
@@ -63,7 +63,7 @@ class SatSimBridgeEngine(BaseSimulationEngine):
     @staticmethod
     def get_default_templates() -> Dict[str, Dict[str, Any]]:
         """Return official native SatSim 0.26 JSON configuration templates."""
-        catalog_path = get_satsim_catalog_file()
+        catalog_path = get_satsim_catalog_file().replace("\\", "/")
         has_catalog = os.path.exists(catalog_path)
 
         return {
@@ -344,6 +344,14 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                     "tle2": target.tle2,
                     "mv": target.visual_magnitude
                 })
+            elif target.mode == OrbitMode.LINE:
+                obs_list.append({
+                    "mode": "line",
+                    "object_name": target.name,
+                    "origin": list(target.origin) if target.origin else [0.2, 0.3],
+                    "velocity": list(target.velocity) if target.velocity else [18.0, 7.0],
+                    "mv": target.visual_magnitude
+                })
             elif target.mode == OrbitMode.SMART_TRANSIT:
                 obs_list.append({
                     "mode": "line",
@@ -376,7 +384,7 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                 "dec": dec
             }
 
-        catalog_path = get_satsim_catalog_file()
+        catalog_path = get_satsim_catalog_file().replace("\\", "/")
         has_catalog = os.path.exists(catalog_path)
 
         ssp = {
@@ -533,9 +541,17 @@ class SatSimBridgeEngine(BaseSimulationEngine):
         if "obs" not in geom:
             geom["obs"] = {"mode": "list", "list": []}
         if "stars" not in geom:
-            geom["stars"] = {"mode": "none", "motion": {"mode": "none"}}
+            cat_p = get_satsim_catalog_file().replace("\\", "/")
+            geom["stars"] = {"mode": "csv", "path": cat_p, "motion": {"mode": "none"}}
         elif isinstance(geom["stars"], dict):
             geom["stars"].setdefault("motion", {"mode": "none"})
+            if geom["stars"].get("mode") == "csv":
+                cat_p = get_satsim_catalog_file().replace("\\", "/")
+                p = geom["stars"].get("path")
+                if not p or not os.path.exists(p):
+                    geom["stars"]["path"] = cat_p
+                else:
+                    geom["stars"]["path"] = p.replace("\\", "/")
 
         if "background" not in ssp:
             ssp["background"] = {"galactic": 21.6}
@@ -657,6 +673,67 @@ class SatSimBridgeEngine(BaseSimulationEngine):
                         })
             except Exception:
                 pass
+
+        # If SatSim SatNet JSON didn't annotate individual stars, project catalog stars into ground truth
+        if len(stars_projected) == 0 and ssp.get("geometry", {}).get("stars", {}).get("mode") != "none":
+            track = ssp.get("geometry", {}).get("site", {}).get("track", {})
+            center_ra = float(track.get("ra", 88.79))
+            center_dec = float(track.get("dec", 7.41))
+            fpa_cfg = ssp.get("fpa", {})
+            fov_x = float(fpa_cfg.get("x_fov", 0.5))
+            fov_y = float(fpa_cfg.get("y_fov", 0.5))
+            fov_radius = max(fov_x, fov_y) * 0.75
+            query_stars = self.catalog.query_cone(center_ra, center_dec, fov_radius, limiting_mag=12.0)
+
+            w_px = int(fpa_cfg.get("width", 1024))
+            h_px = int(fpa_cfg.get("height", 1024))
+            pix_scale = (fov_x * 3600.0) / max(1, w_px)
+            roll = float(ssp.get("geometry", {}).get("site", {}).get("gimbal", {}).get("rotation", 0.0))
+            is_stare = (track.get("mode") == "fixed")
+            exp_time = float(fpa_cfg.get("time", {}).get("exposure", 2.0))
+            streak_len = (exp_time * 15.04) / max(0.1, pix_scale) if is_stare else 0.0
+
+            for s in query_stars:
+                x_px, y_px = project_gnomonic_tan(
+                    s["ra_deg"], s["dec_deg"],
+                    center_ra, center_dec,
+                    roll,
+                    pix_scale,
+                    w_px / 2.0, h_px / 2.0
+                )
+                if 0 <= x_px < w_px and 0 <= y_px < h_px:
+                    vmag = float(s["vmag"])
+                    electrons = calculate_star_electrons(
+                        vmag=vmag,
+                        aperture_m=0.5,
+                        bandwidth_nm=100.0,
+                        quantum_efficiency=float(fpa_cfg.get("qe", 0.85)),
+                        exposure_s=exp_time
+                    )
+                    snr = round(max(3.0, electrons / math.sqrt(max(1.0, electrons + 50.0))), 1)
+                    half_box = max(4.0, (12.0 - vmag) * 1.5 + streak_len / 2.0)
+                    for f_idx in range(len(frames)):
+                        stars_projected.append({
+                            "frame": f_idx,
+                            "name": s["name"],
+                            "class": "Star",
+                            "x_px": round(x_px, 1),
+                            "y_px": round(y_px, 1),
+                            "ra_deg": float(s["ra_deg"]),
+                            "dec_deg": float(s["dec_deg"]),
+                            "vmag": vmag,
+                            "snr": snr,
+                            "electrons": round(electrons, 1),
+                            "size_px": round(half_box * 2, 1),
+                            "is_streak": is_stare,
+                            "streak_length_px": round(streak_len, 1),
+                            "bbox": [
+                                round(max(0.0, x_px - half_box), 1),
+                                round(max(0.0, y_px - half_box), 1),
+                                round(min(float(w_px), x_px + half_box), 1),
+                                round(min(float(h_px), y_px + half_box), 1)
+                            ]
+                        })
 
         duration = time.time() - t_start
         return SimulationResult(

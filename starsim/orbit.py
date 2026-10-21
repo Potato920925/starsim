@@ -25,6 +25,7 @@ class OrbitMode(str, Enum):
     KEPLERIAN = "keplerian"
     STATE_VECTOR = "state_vector"
     SMART_TRANSIT = "smart_transit"
+    LINE = "line"
 
 
 # Earth gravitational parameter mu = G*M in km^3 / s^2
@@ -74,6 +75,9 @@ class TargetOrbit:
     tle1: str = ""
     tle2: str = ""
     norad_id: Optional[str] = None
+    # SatSim Linear streak fields
+    origin: Optional[List[float]] = None      # [x_norm, y_norm] normalized origin [0, 1]
+    velocity: Optional[List[float]] = None    # [vx_px_s, vy_px_s] velocity vector in px/s
     # Smart Transit / Generated fields
     transit_altitude_km: float = 500.0        # Altitude above sea level in km
     transit_velocity_kms: float = 7.6         # Approximate orbital velocity in km/s
@@ -85,7 +89,10 @@ class TargetOrbit:
 
     def __post_init__(self):
         if isinstance(self.mode, str):
-            self.mode = OrbitMode(self.mode)
+            try:
+                self.mode = OrbitMode(self.mode.lower())
+            except ValueError:
+                self.mode = OrbitMode.LINE if "line" in self.mode.lower() else OrbitMode.TLE
         # Auto-resolve popular preset TLE if tle1 is not specified
         if self.mode == OrbitMode.TLE and (not self.tle1 or not self.tle2):
             key = self.name.lower().replace(" ", "").replace("_", "")
@@ -120,7 +127,10 @@ class TargetOrbit:
     def from_dict(cls, data: Dict[str, Any]) -> "TargetOrbit":
         data_copy = dict(data)
         if "mode" in data_copy and isinstance(data_copy["mode"], str):
-            data_copy["mode"] = OrbitMode(data_copy["mode"])
+            try:
+                data_copy["mode"] = OrbitMode(data_copy["mode"].lower())
+            except ValueError:
+                data_copy["mode"] = OrbitMode.LINE if "line" in data_copy["mode"].lower() else OrbitMode.TLE
         return cls(**data_copy)
 
 
